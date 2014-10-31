@@ -1,0 +1,1141 @@
+.protobuf-package "com.seagate.kinetic.proto"
+
+.record [
+    .name Message
+    .field [
+        .name command
+        .type Message-Command
+        .optional
+        .code 1
+    ]
+    .field [
+        .name hmac
+        .type binary
+        .optional
+        .code 3
+    ]
+]
+
+.record [
+    .name Message-Command
+    .field [
+        .name header
+        .type Message-Header
+        .optional
+        .code 1
+    ]
+    .field [
+        .name body
+        .type Message-Body
+        .optional
+        .code 2
+    ]
+    .field [
+        .name status
+        .type Message-Status
+        .optional
+        .code 3
+    ]
+]
+
+.record [
+    .name Message-Header
+    .field [
+        .name clusterVersion
+        .type protobuf-int64
+        .optional
+        .code 1
+    ]
+    .field [
+        .name identity
+        .type protobuf-int64
+        .optional
+        .code 2
+    ]
+    .field [
+        .name connectionID
+        .type protobuf-int64
+        .optional
+        .code 3
+    ]
+    .field [
+        .name sequence
+        .type protobuf-int64
+        .optional
+        .code 4
+    ]
+    .field [
+        .name ackSequence
+        .type protobuf-int64
+        .optional
+        .code 6
+    ]
+    .field [
+        .name messageType
+        .type Message-MessageType
+        .optional
+        .code 7
+    ]
+    .field [
+        .name timeout
+        .type protobuf-int64
+        .optional
+        .code 9
+    ]
+    .field [
+        .name earlyExit
+        .type bool
+        .optional
+        .code 10
+    ]
+    .field [
+        .name backgroundScan
+        .type bool
+        .optional
+        .code 11
+    ]
+]
+
+.record [
+    .name Message-Body
+    .field [
+        .name keyValue
+        .type Message-KeyValue
+        .optional
+        .code 1
+    ]
+    .field [
+        .name range
+        .type Message-Range
+        .optional
+        .code 2
+    ]
+    .field [
+        .name setup
+        .type Message-Setup
+        .optional
+        .code 3
+    ]
+    .field [
+        .name p2pOperation
+        .type Message-P2POperation
+        .optional
+        .code 4
+    ]
+    .field [
+        .name getLog
+        .type Message-GetLog
+        .optional
+        .code 6
+    ]
+    .field [
+        .name security
+        .type Message-Security
+        .optional
+        .code 7
+    ]
+]
+
+.record [
+    .name Message-Status
+    .field [
+        .name code
+        .type Message-Status-StatusCode
+        .optional
+        .code 1
+    ]
+    .field [
+        .name statusMessage
+        .type string
+        .optional
+        .code 2
+    ]
+    .field [
+        .name detailedMessage
+        .type binary
+        .optional
+        .code 3
+    ]
+]
+
+.enum [
+    .name Message-Status-StatusCode
+    .option [
+        .name INVALID-STATUS-CODE
+        .code -1
+        .protobuf-name "Message_Status_INVALID_STATUS_CODE"
+    ]
+    .option [
+        .name NOT-ATTEMPTED
+        .code 0
+        .protobuf-name "Message_Status_NOT_ATTEMPTED"
+    ]
+    .option [
+        .name SUCCESS
+        .code 1
+        .protobuf-name "Message_Status_SUCCESS"
+    ]
+    .option [
+        .name HMAC-FAILURE
+        .code 2
+        .protobuf-name "Message_Status_HMAC_FAILURE"
+    ]
+    .option [
+        .name NOT-AUTHORIZED
+        .code 3
+        .protobuf-name "Message_Status_NOT_AUTHORIZED"
+    ]
+    .option [
+        .name VERSION-FAILURE
+        .code 4
+        .protobuf-name "Message_Status_VERSION_FAILURE"
+    ]
+    .option [
+        .name INTERNAL-ERROR
+        .code 5
+        .protobuf-name "Message_Status_INTERNAL_ERROR"
+    ]
+    .option [
+        .name HEADER-REQUIRED
+        .code 6
+        .protobuf-name "Message_Status_HEADER_REQUIRED"
+    ]
+    .option [
+        .name NOT-FOUND
+        .code 7
+        .protobuf-name "Message_Status_NOT_FOUND"
+    ]
+    .option [
+        .name VERSION-MISMATCH
+        .code 8
+        .protobuf-name "Message_Status_VERSION_MISMATCH"
+    ]
+    .option [
+        .name SERVICE-BUSY
+        .code 9
+        .protobuf-name "Message_Status_SERVICE_BUSY"
+    ]
+    .option [
+        .name EXPIRED
+        .code 10
+        .protobuf-name "Message_Status_EXPIRED"
+    ]
+    .option [
+        .name DATA-ERROR
+        .code 11
+        .protobuf-name "Message_Status_DATA_ERROR"
+    ]
+    .option [
+        .name PERM-DATA-ERROR
+        .code 12
+        .protobuf-name "Message_Status_PERM_DATA_ERROR"
+    ]
+    .option [
+        .name REMOTE-CONNECTION-ERROR
+        .code 13
+        .protobuf-name "Message_Status_REMOTE_CONNECTION_ERROR"
+    ]
+    .option [
+        .name NO-SPACE
+        .code 14
+        .protobuf-name "Message_Status_NO_SPACE"
+    ]
+    .option [
+        .name NO-SUCH-HMAC-ALGORITHM
+        .code 15
+        .protobuf-name "Message_Status_NO_SUCH_HMAC_ALGORITHM"
+    ]
+    .option [
+        .name INVALID-REQUEST
+        .code 16
+        .protobuf-name "Message_Status_INVALID_REQUEST"
+    ]
+]
+
+.record [
+    .name Message-KeyValue
+    .field [
+        .name newVersion
+        .type binary
+        .optional
+        .code 2
+    ]
+    .field [
+        .name force
+        .type bool
+        .optional
+        .code 8
+    ]
+    .field [
+        .name key
+        .type binary
+        .optional
+        .code 3
+    ]
+    .field [
+        .name dbVersion
+        .type binary
+        .optional
+        .code 4
+    ]
+    .field [
+        .name tag
+        .type binary
+        .optional
+        .code 5
+    ]
+    .field [
+        .name algorithm
+        .type Message-Algorithm
+        .optional
+        .code 6
+    ]
+    .field [
+        .name metadataOnly
+        .type bool
+        .optional
+        .code 7
+    ]
+    .field [
+        .name synchronization
+        .type Message-Synchronization
+        .optional
+        .code 9
+    ]
+]
+
+.record [
+    .name Message-Range
+    .field [
+        .name startKey
+        .type binary
+        .optional
+        .code 1
+    ]
+    .field [
+        .name endKey
+        .type binary
+        .optional
+        .code 2
+    ]
+    .field [
+        .name startKeyInclusive
+        .type bool
+        .optional
+        .code 3
+    ]
+    .field [
+        .name endKeyInclusive
+        .type bool
+        .optional
+        .code 4
+    ]
+    .field [
+        .name maxReturned
+        .type protobuf-int32
+        .optional
+        .code 5
+    ]
+    .field [
+        .name reverse
+        .type bool
+        .optional
+        .code 6
+    ]
+    .field [
+        .name key
+        .type binary
+        .repeated
+        .code 8
+    ]
+]
+
+.record [
+    .name Message-Setup
+    .field [
+        .name newClusterVersion
+        .type protobuf-int64
+        .optional
+        .code 1
+    ]
+    .field [
+        .name instantSecureErase
+        .type bool
+        .optional
+        .code 2
+    ]
+    .field [
+        .name setPin
+        .type binary
+        .optional
+        .code 3
+    ]
+    .field [
+        .name pin
+        .type binary
+        .optional
+        .code 4
+    ]
+    .field [
+        .name firmwareDownload
+        .type bool
+        .optional
+        .code 5
+    ]
+]
+
+.record [
+    .name Message-P2POperation
+    .field [
+        .name peer
+        .type Message-P2POperation-Peer
+        .optional
+        .code 1
+    ]
+    .field [
+        .name operation
+        .type Message-P2POperation-Operation
+        .repeated
+        .code 2
+    ]
+]
+
+.record [
+    .name Message-P2POperation-Operation
+    .field [
+        .name key
+        .type binary
+        .optional
+        .code 3
+    ]
+    .field [
+        .name version
+        .type binary
+        .optional
+        .code 4
+    ]
+    .field [
+        .name newKey
+        .type binary
+        .optional
+        .code 5
+    ]
+    .field [
+        .name force
+        .type bool
+        .optional
+        .code 6
+    ]
+    .field [
+        .name status
+        .type Message-Status
+        .optional
+        .code 7
+    ]
+    .field [
+        .name p2pop
+        .type Message-P2POperation
+        .optional
+        .code 8
+    ]
+]
+
+.record [
+    .name Message-P2POperation-Peer
+    .field [
+        .name hostname
+        .type string
+        .optional
+        .code 1
+    ]
+    .field [
+        .name port
+        .type protobuf-int32
+        .optional
+        .code 2
+    ]
+    .field [
+        .name tls
+        .type bool
+        .optional
+        .code 3
+    ]
+]
+
+.record [
+    .name Message-GetLog
+    .field [
+        .name type
+        .type Message-GetLog-Type
+        .repeated
+        .code 1
+    ]
+    .field [
+        .name utilization
+        .type Message-GetLog-Utilization
+        .repeated
+        .code 2
+    ]
+    .field [
+        .name temperature
+        .type Message-GetLog-Temperature
+        .repeated
+        .code 3
+    ]
+    .field [
+        .name capacity
+        .type Message-GetLog-Capacity
+        .optional
+        .code 4
+    ]
+    .field [
+        .name configuration
+        .type Message-GetLog-Configuration
+        .optional
+        .code 5
+    ]
+    .field [
+        .name statistics
+        .type Message-GetLog-Statistics
+        .repeated
+        .code 6
+    ]
+    .field [
+        .name messages
+        .type binary
+        .optional
+        .code 7
+    ]
+    .field [
+        .name limits
+        .type Message-GetLog-Limits
+        .optional
+        .code 8
+    ]
+]
+
+.record [
+    .name Message-GetLog-Utilization
+    .field [
+        .name name
+        .type string
+        .optional
+        .code 1
+    ]
+    .field [
+        .name value
+        .type float32
+        .optional
+        .code 2
+    ]
+]
+
+.record [
+    .name Message-GetLog-Temperature
+    .field [
+        .name name
+        .type string
+        .optional
+        .code 1
+    ]
+    .field [
+        .name current
+        .type float32
+        .optional
+        .code 2
+    ]
+    .field [
+        .name minimum
+        .type float32
+        .optional
+        .code 3
+    ]
+    .field [
+        .name maximum
+        .type float32
+        .optional
+        .code 4
+    ]
+    .field [
+        .name target
+        .type float32
+        .optional
+        .code 5
+    ]
+]
+
+.record [
+    .name Message-GetLog-Capacity
+    .field [
+        .name nominalCapacityInBytes
+        .type uint64
+        .optional
+        .code 4
+    ]
+    .field [
+        .name portionFull
+        .type float32
+        .optional
+        .code 5
+    ]
+]
+
+.record [
+    .name Message-GetLog-Configuration
+    .field [
+        .name vendor
+        .type string
+        .optional
+        .code 5
+    ]
+    .field [
+        .name model
+        .type string
+        .optional
+        .code 6
+    ]
+    .field [
+        .name serialNumber
+        .type binary
+        .optional
+        .code 7
+    ]
+    .field [
+        .name worldWideName
+        .type binary
+        .optional
+        .code 14
+    ]
+    .field [
+        .name version
+        .type string
+        .optional
+        .code 8
+    ]
+    .field [
+        .name compilationDate
+        .type string
+        .optional
+        .code 12
+    ]
+    .field [
+        .name sourceHash
+        .type string
+        .optional
+        .code 13
+    ]
+    .field [
+        .name protocolVersion
+        .type string
+        .optional
+        .code 15
+    ]
+    .field [
+        .name protocolCompilationDate
+        .type string
+        .optional
+        .code 16
+    ]
+    .field [
+        .name protocolSourceHash
+        .type string
+        .optional
+        .code 17
+    ]
+    .field [
+        .name interface
+        .type Message-GetLog-Configuration-Interface
+        .repeated
+        .code 9
+    ]
+    .field [
+        .name port
+        .type protobuf-int32
+        .optional
+        .code 10
+    ]
+    .field [
+        .name tlsPort
+        .type protobuf-int32
+        .optional
+        .code 11
+    ]
+]
+
+.record [
+    .name Message-GetLog-Configuration-Interface
+    .field [
+        .name name
+        .type string
+        .optional
+        .code 1
+    ]
+    .field [
+        .name MAC
+        .type binary
+        .optional
+        .code 2
+    ]
+    .field [
+        .name ipv4Address
+        .type binary
+        .optional
+        .code 3
+    ]
+    .field [
+        .name ipv6Address
+        .type binary
+        .optional
+        .code 4
+    ]
+]
+
+.record [
+    .name Message-GetLog-Statistics
+    .field [
+        .name messageType
+        .type Message-MessageType
+        .optional
+        .code 1
+    ]
+    .field [
+        .name count
+        .type uint64
+        .optional
+        .code 4
+    ]
+    .field [
+        .name bytes
+        .type uint64
+        .optional
+        .code 5
+    ]
+]
+
+.record [
+    .name Message-GetLog-Limits
+    .field [
+        .name maxKeySize
+        .type uint32
+        .optional
+        .code 1
+    ]
+    .field [
+        .name maxValueSize
+        .type uint32
+        .optional
+        .code 2
+    ]
+    .field [
+        .name maxVersionSize
+        .type uint32
+        .optional
+        .code 3
+    ]
+    .field [
+        .name maxTagSize
+        .type uint32
+        .optional
+        .code 4
+    ]
+    .field [
+        .name maxConnections
+        .type uint32
+        .optional
+        .code 5
+    ]
+    .field [
+        .name maxOutstandingReadRequests
+        .type uint32
+        .optional
+        .code 6
+    ]
+    .field [
+        .name maxOutstandingWriteRequests
+        .type uint32
+        .optional
+        .code 7
+    ]
+    .field [
+        .name maxMessageSize
+        .type uint32
+        .optional
+        .code 8
+    ]
+    .field [
+        .name maxKeyRangeCount
+        .type uint32
+        .optional
+        .code 9
+    ]
+]
+
+.enum [
+    .name Message-GetLog-Type
+    .option [
+        .name INVALID-TYPE
+        .code -1
+        .protobuf-name "Message_GetLog_INVALID_TYPE"
+    ]
+    .option [
+        .name UTILIZATIONS
+        .code 0
+        .protobuf-name "Message_GetLog_UTILIZATIONS"
+    ]
+    .option [
+        .name TEMPERATURES
+        .code 1
+        .protobuf-name "Message_GetLog_TEMPERATURES"
+    ]
+    .option [
+        .name CAPACITIES
+        .code 2
+        .protobuf-name "Message_GetLog_CAPACITIES"
+    ]
+    .option [
+        .name CONFIGURATION
+        .code 3
+        .protobuf-name "Message_GetLog_CONFIGURATION"
+    ]
+    .option [
+        .name STATISTICS
+        .code 4
+        .protobuf-name "Message_GetLog_STATISTICS"
+    ]
+    .option [
+        .name MESSAGES
+        .code 5
+        .protobuf-name "Message_GetLog_MESSAGES"
+    ]
+    .option [
+        .name LIMITS
+        .code 6
+        .protobuf-name "Message_GetLog_LIMITS"
+    ]
+]
+
+.record [
+    .name Message-Security
+    .field [
+        .name acl
+        .type Message-Security-ACL
+        .repeated
+        .code 2
+    ]
+]
+
+.record [
+    .name Message-Security-ACL
+    .field [
+        .name identity
+        .type protobuf-int64
+        .optional
+        .code 1
+    ]
+    .field [
+        .name key
+        .type binary
+        .optional
+        .code 2
+    ]
+    .field [
+        .name hmacAlgorithm
+        .type Message-Security-ACL-HMACAlgorithm
+        .optional
+        .code 3
+    ]
+    .field [
+        .name scope
+        .type Message-Security-ACL-Scope
+        .repeated
+        .code 4
+    ]
+]
+
+.record [
+    .name Message-Security-ACL-Scope
+    .field [
+        .name offset
+        .type protobuf-int64
+        .optional
+        .code 1
+    ]
+    .field [
+        .name value
+        .type binary
+        .optional
+        .code 2
+    ]
+    .field [
+        .name permission
+        .type Message-Security-ACL-Permission
+        .repeated
+        .code 3
+    ]
+    .field [
+        .name TlsRequired
+        .type bool
+        .optional
+        .code 4
+    ]
+]
+
+.enum [
+    .name Message-Security-ACL-HMACAlgorithm
+    .option [
+        .name INVALID-HMAC-ALGORITHM
+        .code -1
+        .protobuf-name "Message_Security_ACL_INVALID_HMAC_ALGORITHM"
+    ]
+    .option [
+        .name HmacSHA1
+        .code 1
+        .protobuf-name "Message_Security_ACL_HmacSHA1"
+    ]
+]
+
+.enum [
+    .name Message-Security-ACL-Permission
+    .option [
+        .name INVALID-PERMISSION
+        .code -1
+        .protobuf-name "Message_Security_ACL_INVALID_PERMISSION"
+    ]
+    .option [
+        .name READ
+        .code 0
+        .protobuf-name "Message_Security_ACL_READ"
+    ]
+    .option [
+        .name WRITE
+        .code 1
+        .protobuf-name "Message_Security_ACL_WRITE"
+    ]
+    .option [
+        .name DELETE
+        .code 2
+        .protobuf-name "Message_Security_ACL_DELETE"
+    ]
+    .option [
+        .name RANGE
+        .code 3
+        .protobuf-name "Message_Security_ACL_RANGE"
+    ]
+    .option [
+        .name SETUP
+        .code 4
+        .protobuf-name "Message_Security_ACL_SETUP"
+    ]
+    .option [
+        .name P2POP
+        .code 5
+        .protobuf-name "Message_Security_ACL_P2POP"
+    ]
+    .option [
+        .name GETLOG
+        .code 7
+        .protobuf-name "Message_Security_ACL_GETLOG"
+    ]
+    .option [
+        .name SECURITY
+        .code 8
+        .protobuf-name "Message_Security_ACL_SECURITY"
+    ]
+]
+
+.enum [
+    .name Message-Synchronization
+    .option [
+        .name INVALID-SYNCHRONIZATION
+        .code -1
+        .protobuf-name "Message_INVALID_SYNCHRONIZATION"
+    ]
+    .option [
+        .name WRITETHROUGH
+        .code 1
+        .protobuf-name "Message_WRITETHROUGH"
+    ]
+    .option [
+        .name WRITEBACK
+        .code 2
+        .protobuf-name "Message_WRITEBACK"
+    ]
+    .option [
+        .name FLUSH
+        .code 3
+        .protobuf-name "Message_FLUSH"
+    ]
+]
+
+.enum [
+    .name Message-Algorithm
+    .option [
+        .name INVALID-ALGORITHM
+        .code -1
+        .protobuf-name "Message_INVALID_ALGORITHM"
+    ]
+    .option [
+        .name SHA1
+        .code 1
+        .protobuf-name "Message_SHA1"
+    ]
+    .option [
+        .name SHA2
+        .code 2
+        .protobuf-name "Message_SHA2"
+    ]
+    .option [
+        .name SHA3
+        .code 3
+        .protobuf-name "Message_SHA3"
+    ]
+    .option [
+        .name CRC32
+        .code 4
+        .protobuf-name "Message_CRC32"
+    ]
+    .option [
+        .name CRC64
+        .code 5
+        .protobuf-name "Message_CRC64"
+    ]
+]
+
+.enum [
+    .name Message-MessageType
+    .option [
+        .name INVALID-MESSAGE-TYPE
+        .code -1
+        .protobuf-name "Message_INVALID_MESSAGE_TYPE"
+    ]
+    .option [
+        .name GET
+        .code 2
+        .protobuf-name "Message_GET"
+    ]
+    .option [
+        .name GET-RESPONSE
+        .code 1
+        .protobuf-name "Message_GET_RESPONSE"
+    ]
+    .option [
+        .name PUT
+        .code 4
+        .protobuf-name "Message_PUT"
+    ]
+    .option [
+        .name PUT-RESPONSE
+        .code 3
+        .protobuf-name "Message_PUT_RESPONSE"
+    ]
+    .option [
+        .name DELETE
+        .code 6
+        .protobuf-name "Message_DELETE"
+    ]
+    .option [
+        .name DELETE-RESPONSE
+        .code 5
+        .protobuf-name "Message_DELETE_RESPONSE"
+    ]
+    .option [
+        .name GETNEXT
+        .code 8
+        .protobuf-name "Message_GETNEXT"
+    ]
+    .option [
+        .name GETNEXT-RESPONSE
+        .code 7
+        .protobuf-name "Message_GETNEXT_RESPONSE"
+    ]
+    .option [
+        .name GETPREVIOUS
+        .code 10
+        .protobuf-name "Message_GETPREVIOUS"
+    ]
+    .option [
+        .name GETPREVIOUS-RESPONSE
+        .code 9
+        .protobuf-name "Message_GETPREVIOUS_RESPONSE"
+    ]
+    .option [
+        .name GETKEYRANGE
+        .code 12
+        .protobuf-name "Message_GETKEYRANGE"
+    ]
+    .option [
+        .name GETKEYRANGE-RESPONSE
+        .code 11
+        .protobuf-name "Message_GETKEYRANGE_RESPONSE"
+    ]
+    .option [
+        .name GETVERSION
+        .code 16
+        .protobuf-name "Message_GETVERSION"
+    ]
+    .option [
+        .name GETVERSION-RESPONSE
+        .code 15
+        .protobuf-name "Message_GETVERSION_RESPONSE"
+    ]
+    .option [
+        .name SETUP
+        .code 22
+        .protobuf-name "Message_SETUP"
+    ]
+    .option [
+        .name SETUP-RESPONSE
+        .code 21
+        .protobuf-name "Message_SETUP_RESPONSE"
+    ]
+    .option [
+        .name GETLOG
+        .code 24
+        .protobuf-name "Message_GETLOG"
+    ]
+    .option [
+        .name GETLOG-RESPONSE
+        .code 23
+        .protobuf-name "Message_GETLOG_RESPONSE"
+    ]
+    .option [
+        .name SECURITY
+        .code 26
+        .protobuf-name "Message_SECURITY"
+    ]
+    .option [
+        .name SECURITY-RESPONSE
+        .code 25
+        .protobuf-name "Message_SECURITY_RESPONSE"
+    ]
+    .option [
+        .name PEER2PEERPUSH
+        .code 28
+        .protobuf-name "Message_PEER2PEERPUSH"
+    ]
+    .option [
+        .name PEER2PEERPUSH-RESPONSE
+        .code 27
+        .protobuf-name "Message_PEER2PEERPUSH_RESPONSE"
+    ]
+    .option [
+        .name NOOP
+        .code 30
+        .protobuf-name "Message_NOOP"
+    ]
+    .option [
+        .name NOOP-RESPONSE
+        .code 29
+        .protobuf-name "Message_NOOP_RESPONSE"
+    ]
+    .option [
+        .name FLUSHALLDATA
+        .code 32
+        .protobuf-name "Message_FLUSHALLDATA"
+    ]
+    .option [
+        .name FLUSHALLDATA-RESPONSE
+        .code 31
+        .protobuf-name "Message_FLUSHALLDATA_RESPONSE"
+    ]
+]
