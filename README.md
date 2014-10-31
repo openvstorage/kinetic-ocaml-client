@@ -2,6 +2,7 @@ Kinetic OCaml Client
 ====================
 This is an OCaml client for Seagate's Kinetic drives. Currently, it uses protocol version 2.0.4, which is what our drives speaks.
 
+Todo:
 - [ ] Also support 3.X protocol
 - [ ] use 4.0.2 Bytes iso strings for buffers (depends on piqi)
 - [ ] opam installable
@@ -18,16 +19,16 @@ In concreto, you need:
 
 If you have these, you can compile everything with:
 
-    ```
-    $> make
-    ```
+```
+$> make
+```
 
 You can install the library with:
 
 
-    ```
-    $> make install-lib
-    ```
+```
+$> make install-lib
+```
 
 
 Once you have the library installed, you just add `true:package(kinetic-client) to your ocamlbuild _tags file.
@@ -41,7 +42,7 @@ The API is defined in [kinetic.mli](src/kinetic.mli)
 
 typically you'd do something like:
 
-    ```OCaml
+```OCaml
     let sa = make_socket_address "127.0.0.1" 8123 in
     let secret = "...." in
     let session = Kinetic.make_session ....in
@@ -53,7 +54,9 @@ typically you'd do something like:
        ...
       )
 
-    ````
+```
 
 
 Have fun,
+
+   The CloudFounders team
