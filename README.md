@@ -1,19 +1,20 @@
 Kinetic OCaml Client
 ====================
-This is an OCaml client for Seagate's Kinetic drives. Currently, it uses protocol version 2.0.4, which is what our drives speaks.
+This is an OCaml client for [Seagate's Kinetic drives](https://developers.seagate.com/display/KV/Kinetic+Open+Storage+Documentation+Wiki). Currently, it uses protocol version 2.0.4. This is what our drives speak and corresponds with version 0.7.0.2 of the Java Simulator
+
 
 Todo:
 - [ ] Also support 3.X protocol
 - [ ] use 4.0.2 Bytes iso strings for buffers (depends on piqi)
-- [ ] opam installable
-
+- [X] opam installable
+- [ ] publish on opam repo
 
 Installation
 ============
 In order to build the client, you need to have some OCaml libraries present.
 In concreto, you need:
   - Lwt
-  - piqi
+  - piqi.0.7.1
   - Cryptokit
 
 
