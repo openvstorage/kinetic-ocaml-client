@@ -8,8 +8,6 @@ piqi:
 
 kinetic_piqi_ml: piqi
 	piqic-ocaml --embed-piqi -C src src/kinetic.proto.piqi
-	patch -d src < src/kinetic_piqi.patch
-
 
 example:
 	ocamlbuild -use-ocamlfind test_it.native
