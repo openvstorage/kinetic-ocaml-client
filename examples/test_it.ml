@@ -70,10 +70,20 @@ let () =
       (fun conn ->
        Kinetic.handshake secret cluster_version conn
        >>= fun session ->
+       (*
        put_get_delete_test session conn >>= fun () ->
        fill session conn 1000 >>= fun () ->
        Lwt_io.printlf "range:" >>= fun () ->
        range_test session conn >>= fun () ->
+        *)
+       let batch_id = 65l in
+       Kinetic.start_batch_operation session conn batch_id      >>= fun batch ->
+       Kinetic.batch_put session conn batch "xxx" (Some "XXX")  >>= fun () ->
+       (*
+Kinetic.batch_put session conn batch"xxxx" (Some "XXXX") >>= fun () ->
+        *)
+       Kinetic.end_batch_operation session batch >>= fun conn ->
+
 (*
        Kinetic.noop session conn >>= fun () ->
        peer2peer_test session conn

@@ -60,6 +60,40 @@ let _assert_success (command:Command.t) =
   let code = _get_status command |> _get_status_code in
   assert (code = `success)
 
+let message_type2s = function
+  | `invalid_message_type -> "invalide_message_type"
+  | `get -> "get"
+  | `get_response -> "get_response"
+  | `put -> "put"
+  | `put_response -> "put_response"
+  | `start_batch_response -> "start_batch_response"
+  | `end_batch_response -> "end_batch_response"
+  | _ -> "todo ..."
+
+let _get_message_type (command:Command.t) =
+  let header = unwrap_option "header" command.header in
+  unwrap_option "message_type" header.message_type
+
+let _assert_both (command:Command.t) typ code =
+  let header = unwrap_option "header" command.header in
+  let htyp = unwrap_option "message type" header.message_type in
+  if htyp = typ
+  then
+    begin
+      let status = _get_status command in
+      let ccode = _get_status_code status in
+      if ccode = code
+      then ()
+      else
+        let sm = _get_status_message status in
+        failwith sm
+    end
+  else
+    failwith (
+      htyp |>
+        message_type2s |>
+        Printf.sprintf "unexpected type: %s"
+      )
 
 
 let maybe_verify_msg (m:Message.t) =
@@ -67,6 +101,7 @@ let maybe_verify_msg (m:Message.t) =
   match m.auth_type with
   | Some `unsolicitedstatus -> ()
   | _ -> failwith "todo:verify_msg"
+
 
 let verify_status (status:Command_status.t) =
   let open Command_status in
@@ -141,16 +176,91 @@ let network_send oc proto_raw vo =
   Lwt_io.write oc proto_raw >>= fun ()->
   write_vo ()
 
-(*
+let _parse_command (m:Message.t) =
+  let open Message in
+  let command_bytes = unwrap_option "command_bytes" m.command_bytes in
+  let command_buf = Piqirun.init_from_string command_bytes in
+  let command = parse_command command_buf in
+  command
 
-let get_status_detailed_message (m:Message.t) =
-  let command = unwrap_option "command" m.command in
-  let status  = unwrap_option "status" command.status in
-  let dm      = unwrap_option "detailed" status.detailed_message
-  in
-  dm
+let _get_sequence (command : Command.t) =
+  let header = unwrap_option "header" command.header in
+  let seq = unwrap_option "sequence" header.sequence in
+  seq
 
- *)
+let _get_ack_sequence (command:Command.t) =
+  let header = unwrap_option "header" command.header in
+  let ack_seq = unwrap_option "ack_sequence" header.ack_sequence in
+  ack_seq
+
+module Batch =
+struct
+  type t = { mvar :  unit Lwt_mvar.t;
+             handlers : (command_message_type,
+                         Message.t * bytes option -> unit Lwt.t) Hashtbl.t;
+             conn : Lwt_io.input_channel * Lwt_io.output_channel;
+             batch_id : int32;
+             go : bool ref;
+           }
+
+  let find t h =
+    try Some (Hashtbl.find t h)
+    with Not_found -> None
+
+  let remove t h = Hashtbl.remove t h
+
+  let make (ic,oc) batch_id =
+    let handlers = Hashtbl.create 5 in
+    let mvar = Lwt_mvar.create_empty () in
+    let rec loop (go:bool ref) (ic:Lwt_io.input_channel) =
+      let size = Hashtbl.length handlers in
+      if size > 0 || !go
+      then
+        begin
+          Lwt_io.printlf "waiting for msg" >>= fun () ->
+          network_receive ic >>= fun (m,vo) ->
+          Lwt_io.printlf "got msg" >>= fun () ->
+          let command = _parse_command m in
+          let typ = _get_message_type command in
+          let typs = message_type2s typ in
+          begin
+            match find handlers typ with
+            | None ->
+               Lwt_io.printlf "\tignoring: %s" typs
+            | Some h ->
+               Lwt_io.printlf "found handler for: %s" typs
+               >>= fun () ->
+               let () = remove handlers typ in
+               h (m,vo)
+          end >>= fun ()->
+          loop go ic
+        end
+      else
+        begin
+          Lwt_mvar.put mvar () >>= fun () ->
+          Lwt_io.printlf "loop ends here."
+        end
+    in
+    let go = ref true in
+    let t = loop go ic in
+    let () = Lwt.ignore_result t in
+    { mvar  ; handlers ; conn = (ic,oc) ; batch_id; go = go}
+
+  let add_handler t typ h =
+    let typs = message_type2s typ in
+    Lwt_io.printlf "add handler for: %s" typs >>= fun () ->
+    Hashtbl.add t.handlers typ h;
+    Lwt.return ()
+
+  let close t =
+    Lwt_io.printlf "closing...." >>= fun () ->
+    t.go := false;
+    Lwt_mvar.take  t.mvar >>= fun () ->
+    Lwt.return ()
+end
+
+
+
 
 module Kinetic = struct
     type session = {
@@ -161,17 +271,14 @@ module Kinetic = struct
         mutable sequence: int64;
       }
 
+    type batch = Batch.t
+
     type key = bytes
     type value = bytes
     type connection = Lwt_io.input_channel * Lwt_io.output_channel
     let incr_sequence t = t.sequence <- Int64.succ t.sequence
 
-    let _parse_command (m:Message.t) =
-      let open Message in
-      let command_bytes = unwrap_option "command_bytes" m.command_bytes in
-      let command_buf = Piqirun.init_from_string command_bytes in
-      let command = parse_command command_buf in
-      command
+
 
     let handshake secret cluster_version (ic,oc) =
       network_receive ic >>= fun (m,vo) ->
@@ -202,7 +309,7 @@ module Kinetic = struct
           identity = 1L;
           sequence = 0L;
           secret;
-          connection_id
+          connection_id;
         }
       in
       Lwt.return session
@@ -237,7 +344,7 @@ module Kinetic = struct
     proto_raw
 
 
-  let set_ko ko (body:Command_body.t) =
+  let put_ko ko (body:Command_body.t) =
     let open Command_key_value in
     let kv = default_command_key_value() in
     let () = kv.key <- ko in
@@ -245,13 +352,13 @@ module Kinetic = struct
     let () = body.key_value <- Some kv in
     ()
 
-  let make_set session key    =
-      make_serialized_msg session `put  (set_ko (Some key))
+  let make_put session key =
+      make_serialized_msg session `put  (put_ko (Some key))
 
   let make_delete session key =
-      make_serialized_msg session `delete (set_ko (Some key))
+      make_serialized_msg session `delete (put_ko (Some key))
 
-  let make_start_batch session batch_id =
+  let make_batch_message session mt batch_id =
     let open Message_hmacauth in
     let command = default_command () in
     let header = default_command_header () in
@@ -268,7 +375,7 @@ module Kinetic = struct
     let () = command.body <- Some body in
     let m = default_message () in
 
-    let () = header.message_type <- Some `start_batch in
+    let () = header.message_type <- Some mt in
 
 
     let command_bytes = Piqirun.to_string(gen_command command) in
@@ -281,6 +388,14 @@ module Kinetic = struct
     let proto_raw = Piqirun.to_string(gen_message m) in
     proto_raw
 
+  let make_start_batch session batch_id =
+    make_batch_message session `start_batch batch_id
+
+  let make_end_batch session batch_id =
+    make_batch_message session `end_batch batch_id
+
+  let make_abort_batch session batch_id =
+    make_batch_message session `abort_batch batch_id
 
   let set session (ic,oc) k vo =
     match vo with
@@ -298,7 +413,7 @@ module Kinetic = struct
        end
     | Some _ ->
        begin
-         let msg = make_set session k in
+         let msg = make_put session k in
          network_send oc msg vo >>= fun ()->
          network_receive ic >>= fun (r, vo) ->
          assert (vo = None);
@@ -310,7 +425,7 @@ module Kinetic = struct
        end
 
   let make_get session key =
-      make_serialized_msg session `get  (set_ko (Some key))
+      make_serialized_msg session `get  (put_ko (Some key))
 
   let get session (ic,oc) k =
     let msg = make_get session k in
@@ -379,7 +494,7 @@ module Kinetic = struct
     network_receive ic       >>= fun (r,vo) ->
     let command = _parse_command r in
     _assert_type command `getkeyrange_response;
-    let () = incr_sequence session in
+    incr_sequence session;
     let status = _get_status command in
     let code = _get_status_code status in
     match code with
@@ -389,12 +504,75 @@ module Kinetic = struct
     | _ -> let sm = _get_status_message status in
            Lwt.fail (Failure sm)
 
-
   let start_batch_operation session (ic,oc) batch_id =
     let msg = make_start_batch session batch_id in
     network_send oc msg None >>= fun () ->
-    network_receive ic >>= fun (r,vo) ->
-    Lwt.return (r,vo)
+    let batch = Batch.make (ic,oc) batch_id in
+    Batch.add_handler
+      batch
+      `start_batch_response
+      (fun (m,vo) ->
+       let command = _parse_command m in
+       _assert_both command `start_batch_response `success;
+       Lwt_io.printlf "start_batch_operation ok!"
+      )
+    >>= fun () ->
+    let () = incr_sequence session in
+    Lwt.return batch
+
+  let end_batch_operation session (batch:Batch.t) =
+    let open Batch in
+    let msg = make_end_batch session batch.batch_id in
+    Batch.add_handler
+      batch `end_batch_response
+      (fun (m,vo) -> Lwt_io.printlf "end_batch ok?")
+    >>= fun () ->
+    let oc = snd batch.conn in
+    network_send oc msg None >>= fun () ->
+    Batch.close batch >>= fun () ->
+    incr_sequence session;
+    Lwt.return batch.conn
+
+  let batch_put session (ic,oc) (batch:Batch.t) key vo =
+
+    let make_batch_put session batch_id key =
+      let open Message_hmacauth in
+      let command = default_command () in
+      let header = default_command_header () in
+      header.cluster_version <- Some session.cluster_version;
+      header.connection_id <- Some session.connection_id;
+      header.ack_sequence <- Some session.sequence;
+      (* batch_id *)
+      header.batch_id <- Some batch_id;
+
+      command.header <- Some header;
+      let body = default_command_body () in
+      put_ko (Some key) body;
+      command.body <- Some body;
+      let m = default_message () in
+
+      header.message_type <- Some `put;
+
+      let command_bytes = Piqirun.to_string(gen_command command) in
+      m.command_bytes <- Some command_bytes;
+      let hmac = calculate_hmac session.secret command_bytes in
+      let hmac_auth = default_message_hmacauth() in
+      hmac_auth.identity <- Some session.identity;
+      hmac_auth.hmac <- Some hmac;
+      m.hmac_auth <- Some hmac_auth;
+      let proto_raw = Piqirun.to_string(gen_message m) in
+      proto_raw
+    in
+    let open Batch in
+    let msg = make_batch_put session batch.batch_id key in
+    Batch.add_handler
+      batch `put_response
+      (fun _ -> Lwt_io.printlf "make_batch_put ok?")
+    >>= fun () ->
+
+    network_send oc msg vo >>= fun () ->
+    incr_sequence session;
+    Lwt.return ()
 
 
 (*
