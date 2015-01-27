@@ -118,8 +118,7 @@ let () =
        (* Lwt_io.printlf "range:" >>= fun () ->
        range_test session conn >>= fun () -> *)
 
-       let batch_id = 65l in
-       Kinetic.start_batch_operation session conn batch_id      >>= fun batch ->
+       Kinetic.start_batch_operation session conn >>= fun batch ->
        let pe = Kinetic.make_entry
                      ~key:"xxx"
                      ~db_version:None

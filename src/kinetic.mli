@@ -48,7 +48,7 @@ module Kinetic : sig
 
    val start_batch_operation :
      ?handler:handler ->
-     session -> connection -> int32 -> batch Lwt.t
+     session -> connection -> batch Lwt.t
 
    val batch_put :
      ?handler:handler ->

@@ -32,6 +32,21 @@ let unwrap_option msg = function
   | None -> failwith ("None " ^ msg)
   | Some x -> x
 
+let option2s x2s = function
+  | None -> "None"
+  | Some x -> Printf.sprintf "Some %s" (x2s x)
+
+let so2s = option2s (fun x -> x)
+let bo2s = option2s (function | true -> "true" | false -> "false")
+
+let trimmed x =
+  let x', post =
+    if String.length x < 20
+    then x, "" else
+      (String.sub x 0 20), "..."
+  in
+  (to_hex x') ^ post
+
 open Kinetic_piqi
 open Message
 open Command
@@ -219,9 +234,11 @@ module Session = struct
         identity: int64;
         connection_id: int64;
         mutable sequence: int64;
+        mutable next_batch_id: int32;
       }
 
     let incr_sequence t = t.sequence <- Int64.succ t.sequence
+
 end
 
 module Batch =
@@ -326,9 +343,17 @@ module Kinetic = struct
         key:key; db_version:version; new_version : version;
         vo: value option;
       }
+
     let make_entry
       ~key ~db_version ~new_version vo = { key; db_version; new_version; vo }
 
+    let entry2s e =
+      let so2hs s = option2s (fun x -> Printf.sprintf "`%s`" (to_hex x)) s in
+      Printf.sprintf "{ key=%S; db_version=%s; new_version=%s; vo=%s}"
+               e.key
+               (so2hs e.db_version)
+               (so2hs e.new_version)
+               (option2s trimmed e.vo)
 
     type rc = Batch.rc
     type handler = Batch.handler
@@ -365,6 +390,7 @@ module Kinetic = struct
           sequence = 0L;
           secret;
           connection_id;
+          next_batch_id = 1l;
         }
       in
       Lwt.return session
@@ -597,12 +623,16 @@ module Kinetic = struct
     let open Batch in
     match rc with
     | Ok       -> Lwt_log.debug  ~section "default_handler ok"
-    | Nok(i,b) -> Lwt_log.info_f ~section "NOK!" >>= fun () ->
+    | Nok(i,b) -> Lwt_log.info_f ~section "NOK!: rc:%i; b=%S"  i b
+                  >>= fun () ->
                   Lwt.fail (Kinetic_exc (i,b))
 
   let start_batch_operation
         ?(handler = default_handler)
-        session (ic,oc) batch_id =
+        session (ic,oc) =
+    let open Session in
+    let batch_id = session.next_batch_id in
+    let () = session.next_batch_id <- Int32.succ batch_id in
     let msg = make_start_batch session batch_id in
     network_send oc msg None >>= fun () ->
     let batch = Batch.make session (ic,oc) batch_id in
@@ -673,6 +703,9 @@ module Kinetic = struct
         ~forced
 
     =
+    Lwt_log.debug_f ~section "batch_put %s ~forced:%s" (entry2s entry)
+            (bo2s forced)
+    >>= fun () ->
     let open Batch in
     let msg = make_batch_msg
                 batch.session
