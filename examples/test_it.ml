@@ -2,28 +2,65 @@ let so2s = function
   | None -> "None"
   | Some s -> Printf.sprintf "Some(%S)" s
 
+let vco2s = function
+  | None -> "None"
+  | Some (v, version) -> Printf.sprintf "Some(%S, %s)" v (so2s version)
+
+
 open Lwt
 open Kinetic
 
 let put_get_delete_test session conn =
+
   let rec loop i =
     if i = 1000
     then Lwt.return ()
     else
       let key = Printf.sprintf "x_%05i" i  in
       let value = Printf.sprintf "value_%05i" i in
-      Kinetic.set session conn key (Some value) >>= fun () ->
-      Kinetic.get session conn key >>= fun vo ->
-      Lwt_io.printlf "drive[%S]=%s" key (so2s vo) >>= fun () ->
-      assert (Some value = vo);
-      Kinetic.set session conn key None >>= fun () ->
+      Kinetic.put session conn key value
+                  ~db_version:None
+                  ~new_version:None
+                  ~forced:(Some true)
+      >>= fun () ->
+      Kinetic.get session conn key >>= fun vco ->
+      Lwt_io.printlf "drive[%S]=%s" key (vco2s vco) >>= fun () ->
+      let () = match vco with
+      | None -> failwith "should be present"
+      | Some (value2, version) ->
+         begin
+           assert (value = value2);
+           assert (version = Some "");
+         end
+      in
+      Kinetic.delete_forced session conn key >>= fun () ->
       Lwt_io.printlf "deleted %S" key >>= fun () ->
-      Kinetic.get session conn key >>= fun vo ->
-      Lwt_io.printlf "drive[%S]=%s" key (so2s vo) >>= fun () ->
+      Kinetic.get session conn key >>= fun vco ->
+      Lwt_io.printlf "drive[%S]=%s" key (vco2s vco) >>= fun () ->
       loop (i+1)
   in
   loop 0
 
+let put_version_test session conn =
+  let key = "with_version" in
+  Kinetic.delete_forced session conn key >>= fun () ->
+  let value = "the_value" in
+  let version = Some "0" in
+  Kinetic.put session conn key value
+              ~new_version:version
+              ~db_version:None
+              ~forced:(Some true)
+  >>= fun () ->
+  Kinetic.get session conn key >>= fun vco ->
+  Lwt_io.printlf "vco=%s" (vco2s vco) >>= fun () ->
+  let new_version = Some "1" in
+  Kinetic.put session conn key "next_value"
+              ~db_version:new_version ~new_version
+              ~forced:None
+  >>= fun () ->
+  Kinetic.get session conn key >>= fun vco2 ->
+  Lwt_io.printlf "vco2=%s" (vco2s vco2) >>= fun () ->
+  Lwt.return ()
 
 let fill session conn n =
   let rec loop i =
@@ -32,8 +69,12 @@ let fill session conn n =
     else
       let key = Printf.sprintf "x_%05i" i in
       let v = Printf.sprintf "value_%05i" i in
-      let vo = Some v in
-      Kinetic.set session conn key vo >>= fun () ->
+      Kinetic.put
+        session conn key v
+        ~db_version:None
+        ~new_version:None
+        ~forced:(Some true)
+      >>= fun () ->
       loop (i+1)
   in
   loop 0
@@ -70,19 +111,33 @@ let () =
       (fun conn ->
        Kinetic.handshake secret cluster_version conn
        >>= fun session ->
-       (*
+
        put_get_delete_test session conn >>= fun () ->
-       fill session conn 1000 >>= fun () ->
-       Lwt_io.printlf "range:" >>= fun () ->
-       range_test session conn >>= fun () ->
-        *)
+       (* put_version_test session conn >>= fun () -> *)
+       (* fill session conn 1000 >>= fun () -> *)
+       (* Lwt_io.printlf "range:" >>= fun () ->
+       range_test session conn >>= fun () -> *)
+
        let batch_id = 65l in
        Kinetic.start_batch_operation session conn batch_id      >>= fun batch ->
-       Kinetic.batch_put session conn batch "xxx" (Some "XXX")  >>= fun () ->
-       (*
-Kinetic.batch_put session conn batch"xxxx" (Some "XXXX") >>= fun () ->
-        *)
-       Kinetic.end_batch_operation session batch >>= fun conn ->
+       let pe = Kinetic.make_entry
+                     ~key:"xxx"
+                     ~db_version:None
+                     ~new_version:None
+                     (Some "XXX")
+       in
+       Kinetic.batch_put batch pe ~forced:(Some true)
+       >>= fun () ->
+       let de = Kinetic.make_entry
+                  ~key:"xxx"
+                  ~db_version:None
+                  ~new_version: None
+                  None
+       in
+       Kinetic.batch_delete batch de ~forced:(Some true)
+       >>= fun () ->
+
+       Kinetic.end_batch_operation batch >>= fun conn ->
 
 (*
        Kinetic.noop session conn >>= fun () ->

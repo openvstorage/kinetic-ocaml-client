@@ -39,6 +39,8 @@ open Command_header
 open Command_body
 open Command_status
 
+let section = Lwt_log.Section.make "kinetic"
+
 let _assert_type (command:Command.t) typ =
   let header  = unwrap_option "header" command.header in
   let htyp    = unwrap_option "message type" header.message_type in
@@ -70,6 +72,19 @@ let message_type2s = function
   | `end_batch_response -> "end_batch_response"
   | _ -> "todo ..."
 
+let status_code2s = function
+  | `invalid_status_code -> "invalid_status_code"
+  | `not_attempted -> "not_attempted"
+  | `success   -> "success"
+  | `hmac_failure -> "hmac_failure"
+  | `not_authorized -> "not_authorized"
+  | `version_failure -> "version_failure"
+  | `internal_error -> "internal_error"
+  | `header_required -> "header_required"
+  | `not_found -> "not_found"
+  | `version_mismatch -> "version_mismatch"
+  | _ -> "??? status"
+
 let _get_message_type (command:Command.t) =
   let header = unwrap_option "header" command.header in
   unwrap_option "message_type" header.message_type
@@ -85,8 +100,11 @@ let _assert_both (command:Command.t) typ code =
       if ccode = code
       then ()
       else
-        let sm = _get_status_message status in
-        failwith sm
+        begin
+          let () = Printf.printf "ccode:%s\n%!" (status_code2s ccode) in
+          let sm = _get_status_message status in
+          failwith sm
+        end
     end
   else
     failwith (
@@ -193,23 +211,43 @@ let _get_ack_sequence (command:Command.t) =
   let ack_seq = unwrap_option "ack_sequence" header.ack_sequence in
   ack_seq
 
+
+module Session = struct
+    type t = {
+        secret: string;
+        cluster_version: int64;
+        identity: int64;
+        connection_id: int64;
+        mutable sequence: int64;
+      }
+
+    let incr_sequence t = t.sequence <- Int64.succ t.sequence
+end
+
 module Batch =
 struct
+
+  type rc = | Ok | Nok of int * bytes
+
+  type handler = rc -> unit Lwt.t
+
   type t = { mvar :  unit Lwt_mvar.t;
              handlers : (command_message_type,
-                         Message.t * bytes option -> unit Lwt.t) Hashtbl.t;
+                         rc -> unit Lwt.t) Hashtbl.t;
              conn : Lwt_io.input_channel * Lwt_io.output_channel;
              batch_id : int32;
              go : bool ref;
+             session : Session.t;
            }
 
   let find t h =
     try Some (Hashtbl.find t h)
     with Not_found -> None
 
+
   let remove t h = Hashtbl.remove t h
 
-  let make (ic,oc) batch_id =
+  let make session (ic,oc) batch_id =
     let handlers = Hashtbl.create 5 in
     let mvar = Lwt_mvar.create_empty () in
     let rec loop (go:bool ref) (ic:Lwt_io.input_channel) =
@@ -217,43 +255,52 @@ struct
       if size > 0 || !go
       then
         begin
-          Lwt_io.printlf "waiting for msg" >>= fun () ->
+          Lwt_log.debug ~section "waiting for msg" >>= fun () ->
           network_receive ic >>= fun (m,vo) ->
-          Lwt_io.printlf "got msg" >>= fun () ->
+          Lwt_log.debug ~section "got msg" >>= fun () ->
           let command = _parse_command m in
           let typ = _get_message_type command in
           let typs = message_type2s typ in
           begin
             match find handlers typ with
             | None ->
-               Lwt_io.printlf "\tignoring: %s" typs
+               Lwt_log.info_f ~section "\tignoring: %s" typs
             | Some h ->
-               Lwt_io.printlf "found handler for: %s" typs
+               Lwt_log.debug_f ~section "found handler for: %s" typs
                >>= fun () ->
                let () = remove handlers typ in
-               h (m,vo)
+                 let status = _get_status command in
+                 let ccode = _get_status_code status in
+                 let rc =
+                   match ccode with
+                   | `success -> Ok
+                   | _ ->
+                      let sm = _get_status_message status in
+                      Nok (2, sm)
+                 in
+                 h rc
           end >>= fun ()->
           loop go ic
         end
       else
         begin
           Lwt_mvar.put mvar () >>= fun () ->
-          Lwt_io.printlf "loop ends here."
+          Lwt_log.debug ~section "loop ends here."
         end
     in
     let go = ref true in
     let t = loop go ic in
     let () = Lwt.ignore_result t in
-    { mvar  ; handlers ; conn = (ic,oc) ; batch_id; go = go}
+    { mvar  ; handlers ; conn = (ic,oc) ; batch_id; go = go; session}
 
   let add_handler t typ h =
     let typs = message_type2s typ in
-    Lwt_io.printlf "add handler for: %s" typs >>= fun () ->
+    Lwt_log.debug_f ~section "add handler for: %s" typs >>= fun () ->
     Hashtbl.add t.handlers typ h;
     Lwt.return ()
 
   let close t =
-    Lwt_io.printlf "closing...." >>= fun () ->
+    Lwt_log.debug ~section "closing...." >>= fun () ->
     t.go := false;
     Lwt_mvar.take  t.mvar >>= fun () ->
     Lwt.return ()
@@ -263,22 +310,29 @@ end
 
 
 module Kinetic = struct
-    type session = {
-        secret: string;
-        cluster_version: int64;
-        identity: int64;
-        connection_id: int64;
-        mutable sequence: int64;
-      }
+
+
+    type session = Session.t
 
     type batch = Batch.t
 
     type key = bytes
     type value = bytes
+    type version = bytes option
+
     type connection = Lwt_io.input_channel * Lwt_io.output_channel
-    let incr_sequence t = t.sequence <- Int64.succ t.sequence
+
+    type entry = {
+        key:key; db_version:version; new_version : version;
+        vo: value option;
+      }
+    let make_entry
+      ~key ~db_version ~new_version vo = { key; db_version; new_version; vo }
 
 
+    type rc = Batch.rc
+    type handler = Batch.handler
+    exception Kinetic_exc of (int * bytes)
 
     let handshake secret cluster_version (ic,oc) =
       network_receive ic >>= fun (m,vo) ->
@@ -289,7 +343,7 @@ module Kinetic = struct
       let header = unwrap_option "command.header" command.header in
       let open Command_header in
       let connection_id = unwrap_option "header.connection_id" header.connection_id in
-      Lwt_io.printlf "connection_id:%Li" connection_id >>= fun () ->
+      Lwt_log.debug_f ~section "connection_id:%Li" connection_id >>= fun () ->
       let () = verify_cluster_version header cluster_version in
       let open Command_body in
       let body = unwrap_option "command.body" command.body in
@@ -304,7 +358,8 @@ module Kinetic = struct
       (*
 
        *)
-      let session ={
+      let session =
+        let open Session in {
           cluster_version;
           identity = 1L;
           sequence = 0L;
@@ -318,6 +373,7 @@ module Kinetic = struct
 
   let make_serialized_msg session mt body_manip =
     let open Message_hmacauth in
+    let open Session in
     let command = default_command () in
     let header = default_command_header () in
     let () = header.cluster_version <- Some session.cluster_version in
@@ -344,22 +400,41 @@ module Kinetic = struct
     proto_raw
 
 
-  let put_ko ko (body:Command_body.t) =
+  let set_attributes ~ko
+                     ~db_version
+                     ~new_version
+                     ~forced
+                     (body:Command_body.t)
+    =
     let open Command_key_value in
     let kv = default_command_key_value() in
-    let () = kv.key <- ko in
-    let () = kv.force <- Some true in
-    let () = body.key_value <- Some kv in
+    kv.key <- ko;
+    kv.force <- forced;
+    kv.db_version <- db_version;
+    kv.new_version <- new_version;
+    body.key_value <- Some kv;
     ()
 
-  let make_put session key =
-      make_serialized_msg session `put  (put_ko (Some key))
+  let make_delete_forced session key =
+    let mb = set_attributes ~ko:(Some key)
+                            ~db_version:None
+                            ~new_version:None
+                            ~forced:(Some true)
+    in
+    make_serialized_msg session `delete mb
 
-  let make_delete session key =
-      make_serialized_msg session `delete (put_ko (Some key))
+  let make_put session key value ~db_version ~new_version ~forced =
+    let mb = set_attributes ~ko:(Some key)
+                            ~db_version
+                            ~new_version
+                            ~forced
+    in
+    make_serialized_msg session `put mb
+
 
   let make_batch_message session mt batch_id =
     let open Message_hmacauth in
+    let open Session in
     let command = default_command () in
     let header = default_command_header () in
     header.cluster_version <- Some session.cluster_version;
@@ -397,35 +472,39 @@ module Kinetic = struct
   let make_abort_batch session batch_id =
     make_batch_message session `abort_batch batch_id
 
-  let set session (ic,oc) k vo =
-    match vo with
-    | None -> (* it's a delete *)
-       begin
-         let msg = make_delete session k in
-         network_send oc msg None >>= fun () ->
-         network_receive ic >>= fun (r, vo) ->
-         assert (vo = None);
-         let command = _parse_command r in
-         let () = incr_sequence session in
-         _assert_type command `delete_response;
-         _assert_success command;
-         Lwt.return ()
-       end
-    | Some _ ->
-       begin
-         let msg = make_put session k in
-         network_send oc msg vo >>= fun ()->
-         network_receive ic >>= fun (r, vo) ->
-         assert (vo = None);
-         let command = _parse_command r in
-         _assert_type command `put_response;
-         _assert_success command;
-         let () = incr_sequence session in
-         Lwt.return ()
-       end
+  let put session (ic,oc) k value
+          ~db_version ~new_version
+          ~forced
+    =
+    let msg = make_put session k value ~db_version ~new_version ~forced in
+    network_send oc msg (Some value) >>= fun () ->
+    network_receive ic >>= fun (r,vo) ->
+    assert (vo = None);
+    let command = _parse_command r in
+    let () = Session.incr_sequence session in
+    _assert_both command `put_response `success;
+    Lwt.return ()
+
+  let delete_forced session (ic,oc) k =
+    let msg = make_delete_forced session k in
+    network_send oc msg None >>= fun () ->
+    network_receive ic >>= fun (r, vo) ->
+    assert (vo = None);
+    let command = _parse_command r in
+    let () = Session.incr_sequence session in
+    _assert_type command `delete_response;
+    _assert_success command;
+    Lwt.return ()
+
+
 
   let make_get session key =
-      make_serialized_msg session `get  (put_ko (Some key))
+    let mb = set_attributes ~ko:(Some key)
+                            ~db_version:None
+                            ~new_version:None
+                            ~forced:None
+    in
+    make_serialized_msg session `get mb
 
   let get session (ic,oc) k =
     let msg = make_get session k in
@@ -435,13 +514,23 @@ module Kinetic = struct
     _assert_type command  `get_response;
     let status = _get_status command in
     let code = _get_status_code status in
-    let () = incr_sequence session in
+    let () = Session.incr_sequence session in
     match code with
     | `not_found -> Lwt.return None
-    | `success    -> Lwt.return vo
+    | `success    ->
+       let value = unwrap_option "value" vo in
+       let version =
+         let body = unwrap_option "body" command.body in
+         let open Command_key_value in
+         let kv = unwrap_option "kv" body.key_value in
+         let db_version = kv.db_version in
+         db_version
+       in
+       let r = Some (value, version) in
+       Lwt.return r
     | x ->
        let (int_code:int) = Obj.magic x in
-       Lwt_io.printlf "x=%i\n%!" int_code >>= fun () ->
+       Lwt_log.info_f ~section "x=%i\n%!" int_code >>= fun () ->
        let sm = _get_status_message status in
        Lwt.fail (Failure sm)
 
@@ -494,7 +583,7 @@ module Kinetic = struct
     network_receive ic       >>= fun (r,vo) ->
     let command = _parse_command r in
     _assert_type command `getkeyrange_response;
-    incr_sequence session;
+    Session.incr_sequence session;
     let status = _get_status command in
     let code = _get_status_code status in
     match code with
@@ -504,55 +593,68 @@ module Kinetic = struct
     | _ -> let sm = _get_status_message status in
            Lwt.fail (Failure sm)
 
-  let start_batch_operation session (ic,oc) batch_id =
+  let default_handler rc =
+    let open Batch in
+    match rc with
+    | Ok       -> Lwt_log.debug  ~section "default_handler ok"
+    | Nok(i,b) -> Lwt_log.info_f ~section "NOK!" >>= fun () ->
+                  Lwt.fail (Kinetic_exc (i,b))
+
+  let start_batch_operation
+        ?(handler = default_handler)
+        session (ic,oc) batch_id =
     let msg = make_start_batch session batch_id in
     network_send oc msg None >>= fun () ->
-    let batch = Batch.make (ic,oc) batch_id in
+    let batch = Batch.make session (ic,oc) batch_id in
     Batch.add_handler
       batch
       `start_batch_response
-      (fun (m,vo) ->
-       let command = _parse_command m in
-       _assert_both command `start_batch_response `success;
-       Lwt_io.printlf "start_batch_operation ok!"
-      )
+      handler
     >>= fun () ->
-    let () = incr_sequence session in
+    let () = Session.incr_sequence session in
     Lwt.return batch
 
-  let end_batch_operation session (batch:Batch.t) =
+  let end_batch_operation
+        ?(handler = default_handler)
+        (batch:Batch.t)
+    =
     let open Batch in
+    let session = batch.session in
     let msg = make_end_batch session batch.batch_id in
-    Batch.add_handler
-      batch `end_batch_response
-      (fun (m,vo) -> Lwt_io.printlf "end_batch ok?")
-    >>= fun () ->
+    Batch.add_handler batch `end_batch_response handler >>= fun () ->
     let oc = snd batch.conn in
     network_send oc msg None >>= fun () ->
     Batch.close batch >>= fun () ->
-    incr_sequence session;
+    Session . incr_sequence session;
     Lwt.return batch.conn
 
-  let batch_put session (ic,oc) (batch:Batch.t) key vo =
 
-    let make_batch_put session batch_id key =
+  let make_batch_msg session
+                     batch_id
+                     mt
+                     entry
+                     ~forced
+      =
       let open Message_hmacauth in
+      let open Session in
       let command = default_command () in
       let header = default_command_header () in
       header.cluster_version <- Some session.cluster_version;
       header.connection_id <- Some session.connection_id;
       header.ack_sequence <- Some session.sequence;
+
       (* batch_id *)
       header.batch_id <- Some batch_id;
 
       command.header <- Some header;
       let body = default_command_body () in
-      put_ko (Some key) body;
+      set_attributes ~ko:(Some entry.key)
+                     ~db_version:entry.db_version
+                     ~new_version:entry.new_version
+                     ~forced body;
       command.body <- Some body;
       let m = default_message () in
-
-      header.message_type <- Some `put;
-
+      header.message_type <- Some mt;
       let command_bytes = Piqirun.to_string(gen_command command) in
       m.command_bytes <- Some command_bytes;
       let hmac = calculate_hmac session.secret command_bytes in
@@ -562,19 +664,53 @@ module Kinetic = struct
       m.hmac_auth <- Some hmac_auth;
       let proto_raw = Piqirun.to_string(gen_message m) in
       proto_raw
-    in
-    let open Batch in
-    let msg = make_batch_put session batch.batch_id key in
-    Batch.add_handler
-      batch `put_response
-      (fun _ -> Lwt_io.printlf "make_batch_put ok?")
-    >>= fun () ->
 
-    network_send oc msg vo >>= fun () ->
-    incr_sequence session;
+
+
+  let batch_put
+        ?(handler = default_handler)
+        (batch:Batch.t) entry
+        ~forced
+
+    =
+    let open Batch in
+    let msg = make_batch_msg
+                batch.session
+                batch.batch_id
+                `put
+                entry
+                ~forced
+    in
+    Batch.add_handler
+      batch `put_response  handler
+
+    >>= fun () ->
+    let (ic,oc) = batch.conn in
+    network_send oc msg (entry.vo) >>= fun () ->
+    Session.incr_sequence batch.session;
     Lwt.return ()
 
 
+  let batch_delete
+        ?(handler = default_handler)
+        (batch:Batch.t)
+        entry
+        ~forced
+    =
+    let open Batch in
+    let msg = make_batch_msg batch.session
+                             batch.batch_id
+                             `delete
+                             entry
+                             ~forced
+    in
+    Batch.add_handler batch `delete_response handler
+    >>= fun () ->
+
+    let (ic,oc) = batch.conn in
+    network_send oc msg None >>= fun () ->
+    Session.incr_sequence batch.session;
+    Lwt.return ()
 (*
 
     let make_noop session =
