@@ -1,20 +1,21 @@
 Kinetic OCaml Client
 ====================
-This is an OCaml client for [Seagate's Kinetic drives](https://developers.seagate.com/display/KV/Kinetic+Open+Storage+Documentation+Wiki). Currently, it uses protocol version 2.0.4. This is what our drives speak and corresponds with version 0.7.0.2 of the Java Simulator
-
+This is an OCaml client for [Seagate's Kinetic drives](https://developers.seagate.com/display/KV/Kinetic+Open+Storage+Documentation+Wiki).
+Currently, it uses protocol version 3.0.6.
+This is corresponds with version 0.8.0.3 of the Java Simulator.
 
 Todo:
-- [ ] Also support 3.X protocol
+- [X] support 3.X protocol
 - [ ] use 4.0.2 Bytes iso strings for buffers (depends on piqi)
 - [X] opam installable
-- [ ] publish on opam repo
+- [ ] publish 0.0.3 on opam repo
 
 Installation
 ============
 In order to build the client, you need to have some OCaml libraries present.
 In concreto, you need:
   - Lwt
-  - piqi.0.7.1
+  - piqi
   - Cryptokit
 
 
@@ -46,12 +47,19 @@ typically you'd do something like:
 ```OCaml
     let sa = make_socket_address "127.0.0.1" 8123 in
     let secret = "...." in
+    let cluster_version = ... in
     let session = Kinetic.make_session ....in
     Lwt_io.with_connection
       sa
       (fun conn ->
+       Kinetic.handshake secret cluster_version conn >>= fun session ->
        ...
-       Kinetic.set session conn key (Some value) >>= fun () ->
+       Kinetic.put session
+           conn "the_key"
+           (Some "the value")
+           ~db_version:None ~new_version:None
+           ~forced:true
+           >>= fun () ->
        ...
       )
 
