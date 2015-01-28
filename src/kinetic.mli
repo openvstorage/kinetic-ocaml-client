@@ -18,13 +18,23 @@ module Kinetic : sig
     type handler = rc -> unit Lwt.t
     exception Kinetic_exc of (int * bytes)
 
+    val convert_rc : rc -> (int * bytes) option
     val make_entry :
       key:key ->
       db_version:version ->
       new_version:version ->
       value option -> entry
 
+   (** The initial contact with the device.
+       It will send some information that is needed in the session *)
     val handshake : string -> int64 -> connection -> session Lwt.t
+
+    (** insert a key value pair.
+        db_version is the version that's supposed to be the current version
+        in the database.
+        new_version is the version of the key value pair _after_ the update.
+        forced updates happen regardless the db_version
+     *)
 
     val put: session -> connection ->
              key -> value
@@ -46,6 +56,10 @@ module Kinetic : sig
                        bool -> int ->
                        key list Lwt.t
 
+   (**
+       Batches are atomic multi-updates.
+       (while you're doing a batch, you're not supposed to use the connection )
+    *)
    val start_batch_operation :
      ?handler:handler ->
      session -> connection -> batch Lwt.t
@@ -64,7 +78,7 @@ module Kinetic : sig
      ?handler:handler ->
      batch -> connection Lwt.t
 
-  (*
+  (* (* we might need it again in the future *)
     val p2p_push : session -> connection ->
                    (string * int * bool) ->
                    (string * string option) list ->

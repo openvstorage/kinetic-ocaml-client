@@ -1,13 +1,14 @@
 Kinetic OCaml Client
 ====================
-This is an OCaml client for [Seagate's Kinetic drives](https://developers.seagate.com/display/KV/Kinetic+Open+Storage+Documentation+Wiki). Currently, it uses protocol version 3.0.6. This is corresponds with version 0.8.0.3 of the Java Simulator.
-
+This is an OCaml client for [Seagate's Kinetic drives](https://developers.seagate.com/display/KV/Kinetic+Open+Storage+Documentation+Wiki).
+Currently, it uses protocol version 3.0.6.
+This is corresponds with version 0.8.0.3 of the Java Simulator.
 
 Todo:
-- [ ] support 3.X protocol
+- [X] support 3.X protocol
 - [ ] use 4.0.2 Bytes iso strings for buffers (depends on piqi)
 - [X] opam installable
-- [X] publish on opam repo
+- [ ] publish 0.0.3 on opam repo
 
 Installation
 ============
@@ -53,7 +54,12 @@ typically you'd do something like:
       (fun conn ->
        Kinetic.handshake secret cluster_version conn >>= fun session ->
        ...
-       Kinetic.set session conn "the_key" (Some "the value") >>= fun () ->
+       Kinetic.put session
+           conn "the_key"
+           (Some "the value")
+           ~db_version:None ~new_version:None
+           ~forced:true
+           >>= fun () ->
        ...
       )
 

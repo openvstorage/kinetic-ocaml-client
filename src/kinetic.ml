@@ -355,6 +355,13 @@ module Kinetic = struct
     type session = Session.t
 
     type batch = Batch.t
+    type rc = Batch.rc
+
+    let convert_rc = function
+      | Batch.Ok -> None
+      | Batch.Nok(i,m) -> Some (i,m)
+
+    type handler = Batch.handler
 
     type key = bytes
     type value = bytes
@@ -378,8 +385,7 @@ module Kinetic = struct
                (so2hs e.new_version)
                (option2s trimmed e.vo)
 
-    type rc = Batch.rc
-    type handler = Batch.handler
+
     exception Kinetic_exc of (int * bytes)
 
     let handshake secret cluster_version (ic,oc) =

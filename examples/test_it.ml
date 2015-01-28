@@ -53,14 +53,24 @@ let put_version_test session conn =
   >>= fun () ->
   Kinetic.get session conn key >>= fun vco ->
   Lwt_io.printlf "vco=%s" (vco2s vco) >>= fun () ->
-  let new_version = Some "1" in
-  Kinetic.put session conn key "next_value"
-              ~db_version:new_version ~new_version
-              ~forced:None
-  >>= fun () ->
-  Kinetic.get session conn key >>= fun vco2 ->
-  Lwt_io.printlf "vco2=%s" (vco2s vco2) >>= fun () ->
-  Lwt.return ()
+  begin
+    Lwt.catch
+      (fun () ->
+       let new_version = Some "1" in
+       Kinetic.put session conn key "next_value"
+                   ~db_version:new_version ~new_version
+                   ~forced:None
+       >>= fun () ->
+       Lwt.return false
+      )
+      (fun exn -> Lwt.return true)
+  end
+  >>= function
+  | false -> Lwt.fail (Failure "bad behaviour")
+  | true ->
+     Kinetic.get session conn key >>= fun vco2 ->
+     Lwt_io.printlf "vco2=%s" (vco2s vco2) >>= fun () ->
+     Lwt.return ()
 
 let fill session conn n =
   let rec loop i =
@@ -113,10 +123,10 @@ let () =
        >>= fun session ->
 
        put_get_delete_test session conn >>= fun () ->
-       (* put_version_test session conn >>= fun () -> *)
-       (* fill session conn 1000 >>= fun () -> *)
-       (* Lwt_io.printlf "range:" >>= fun () ->
-       range_test session conn >>= fun () -> *)
+       put_version_test session conn >>= fun () ->
+       fill session conn 1000 >>= fun () ->
+       Lwt_io.printlf "range:" >>= fun () ->
+       range_test session conn >>= fun () ->
 
        Kinetic.start_batch_operation session conn >>= fun batch ->
        let pe = Kinetic.make_entry
