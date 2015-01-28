@@ -23,10 +23,11 @@ let calculate_hmac secret msg =
   h # result
 
 let to_hex s =
-  let buf = Buffer.create (String.length s * 3) in
+  let n_chars = String.length s * 3 in
+  let buf = Buffer.create n_chars in
   let hex c = Printf.sprintf "%02x " (Char.code c) in
   String.iter (fun c -> Buffer.add_string buf (hex c)) s;
-  Buffer.contents buf
+  Buffer.sub buf 0 (n_chars - 1)
 
 let unwrap_option msg = function
   | None -> failwith ("None " ^ msg)
@@ -45,8 +46,7 @@ let trimmed x =
     then x, "" else
       (String.sub x 0 20), "..."
   in
-  (to_hex x') ^ post
-
+  Printf.sprintf "0x%S%s" (to_hex x')  post
 open Kinetic_piqi
 open Message
 open Command
@@ -73,6 +73,11 @@ let _get_status_message (status:Command_status.t) =
   let msg = unwrap_option "status.message" status.status_message in
   msg
 
+let _get_detailed_status_message (status:Command_status.t) =
+  match status.detailed_message with
+  | Some x -> x
+  | None -> "None"
+
 let _assert_success (command:Command.t) =
   let code = _get_status command |> _get_status_code in
   assert (code = `success)
@@ -83,6 +88,8 @@ let message_type2s = function
   | `get_response -> "get_response"
   | `put -> "put"
   | `put_response -> "put_response"
+  | `delete -> "delete"
+  | `delete_response -> "delete_response"
   | `start_batch_response -> "start_batch_response"
   | `end_batch_response -> "end_batch_response"
   | _ -> "todo ..."
@@ -100,6 +107,18 @@ let status_code2s = function
   | `version_mismatch -> "version_mismatch"
   | _ -> "??? status"
 
+let status_code2i = function
+  | `invalid_status_code -> -1
+  | `not_attempted -> 0
+  | `success -> 1
+  | `hmac_failure -> 2
+  | `not_authorized -> 3
+  | `version_failure -> 4
+  | `internal_error -> 5
+  | `header_required -> 6
+  | `not_found -> 7
+  | `version_mismatch -> 8
+  | _ -> 42
 let _get_message_type (command:Command.t) =
   let header = unwrap_option "header" command.header in
   unwrap_option "message_type" header.message_type
@@ -293,7 +312,11 @@ struct
                    | `success -> Ok
                    | _ ->
                       let sm = _get_status_message status in
-                      Nok (2, sm)
+                      let dsm = _get_detailed_status_message status in
+                      Lwt_log.ign_debug_f ~section
+                                          "dsm:%S" dsm;
+                      let (rci:int) = status_code2i ccode in
+                      Nok (rci, sm)
                  in
                  h rc
           end >>= fun ()->
@@ -348,7 +371,7 @@ module Kinetic = struct
       ~key ~db_version ~new_version vo = { key; db_version; new_version; vo }
 
     let entry2s e =
-      let so2hs s = option2s (fun x -> Printf.sprintf "`%s`" (to_hex x)) s in
+      let so2hs s = option2s (fun x -> Printf.sprintf "0x%s" (to_hex x)) s in
       Printf.sprintf "{ key=%S; db_version=%s; new_version=%s; vo=%s}"
                e.key
                (so2hs e.db_version)
@@ -623,9 +646,9 @@ module Kinetic = struct
     let open Batch in
     match rc with
     | Ok       -> Lwt_log.debug  ~section "default_handler ok"
-    | Nok(i,b) -> Lwt_log.info_f ~section "NOK!: rc:%i; b=%S"  i b
+    | Nok(i,sm) -> Lwt_log.info_f ~section "NOK!: rc:%i; sm=%S"  i sm
                   >>= fun () ->
-                  Lwt.fail (Kinetic_exc (i,b))
+                  Lwt.fail (Kinetic_exc (i,sm))
 
   let start_batch_operation
         ?(handler = default_handler)
