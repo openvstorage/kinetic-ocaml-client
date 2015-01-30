@@ -22,12 +22,14 @@ let calculate_hmac secret msg =
   let () = h # add_string msg in
   h # result
 
-let to_hex s =
-  let n_chars = String.length s * 3 in
-  let buf = Buffer.create n_chars in
-  let hex c = Printf.sprintf "%02x " (Char.code c) in
-  String.iter (fun c -> Buffer.add_string buf (hex c)) s;
-  Buffer.sub buf 0 (n_chars - 1)
+let to_hex = function
+  | "" -> ""
+  | s ->
+     let n_chars = String.length s * 3 in
+     let buf = Buffer.create n_chars in
+     let hex c = Printf.sprintf "%02x " (Char.code c) in
+     String.iter (fun c -> Buffer.add_string buf (hex c)) s;
+     Buffer.sub buf 0 (n_chars - 1)
 
 let unwrap_option msg = function
   | None -> failwith ("None " ^ msg)
@@ -167,9 +169,10 @@ let verify_status (status:Command_status.t) =
 let verify_cluster_version (header:Command_header.t) my_cluster_version =
 
   let cluster_version =
-    unwrap_option "header.connection_id" header.cluster_version
+    unwrap_option
+      "header.connection_id"
+      header.cluster_version
   in
-  let () = Printf.printf "cluster_version: %Lx\n%!" cluster_version in
   assert (my_cluster_version = cluster_version);
   ()
 
@@ -246,7 +249,37 @@ let _get_ack_sequence (command:Command.t) =
   ack_seq
 
 
+module Config = struct
+    type t = {
+        vendor: string;
+        model:string;
+        serial_number: string;
+        world_wide_name: string;
+        version: string;
+        max_key_size:int;
+        max_value_size:int;
+        max_version_size:int;
+      }
+
+    let make ~vendor ~world_wide_name ~model
+             ~serial_number
+             ~version
+             ~max_key_size
+             ~max_value_size
+             ~max_version_size
+      = {
+        vendor;
+        model;
+        serial_number;
+        world_wide_name;
+        version;
+        max_key_size;
+        max_value_size;
+        max_version_size;
+      }
+end
 module Session = struct
+
     type t = {
         secret: string;
         cluster_version: int64;
@@ -254,7 +287,10 @@ module Session = struct
         connection_id: int64;
         mutable sequence: int64;
         mutable next_batch_id: int32;
+
+        config : Config.t;
       }
+
 
     let incr_sequence t = t.sequence <- Int64.succ t.sequence
 
@@ -377,7 +413,7 @@ module Kinetic = struct
     let make_entry
       ~key ~db_version ~new_version vo = { key; db_version; new_version; vo }
 
-    let entry2s e =
+    let entry_to_string e =
       let so2hs s = option2s (fun x -> Printf.sprintf "0x%s" (to_hex x)) s in
       Printf.sprintf "{ key=%S; db_version=%s; new_version=%s; vo=%s}"
                e.key
@@ -385,6 +421,9 @@ module Kinetic = struct
                (so2hs e.new_version)
                (option2s trimmed e.vo)
 
+    let get_config (session:Session.t) =
+      let open Session in
+      session.config
 
     exception Kinetic_exc of (int * bytes)
 
@@ -401,17 +440,41 @@ module Kinetic = struct
       let () = verify_cluster_version header cluster_version in
       let open Command_body in
       let body = unwrap_option "command.body" command.body in
-
+      let open Command_get_log in
       let log = unwrap_option "body.get_log" body.get_log in
       (*
          self.config = cmd.body.getLog.configuration
          self.limits = cmd.body.getLog.limits
        *)
 
+      let open Command_get_log_configuration in
       let () = verify_limits log in
-      (*
-
-       *)
+      let cfg = unwrap_option "configuration" log.configuration in
+      let wwn = unwrap_option "world_wide_name" cfg.world_wide_name in
+      let vendor = unwrap_option "vendor" cfg.vendor in
+      let model = unwrap_option "model" cfg.model in
+      let serial_number = unwrap_option
+                            "serial_number"
+                            cfg.serial_number in
+      let version = unwrap_option "version" cfg.version in
+      let limits = unwrap_option "limits" log.limits in
+      let open Command_get_log_limits in
+      let m_key_s32 = unwrap_option "max_key_size" limits.max_key_size in
+      let max_key_size = Int32.to_int m_key_s32 in
+      let m_value_s32 = unwrap_option "max_value_size" limits.max_value_size in
+      let max_value_size = Int32.to_int m_value_s32 in
+      let m_version_s32 =
+        unwrap_option "max_version_size" limits.max_version_size in
+      let max_version_size = Int32.to_int m_version_s32 in
+      let my_configuration = Config.make ~vendor
+                                         ~world_wide_name:wwn
+                                         ~model
+                                         ~serial_number
+                                         ~version
+                                         ~max_key_size
+                                         ~max_value_size
+                                         ~max_version_size
+      in
       let session =
         let open Session in {
           cluster_version;
@@ -420,6 +483,7 @@ module Kinetic = struct
           secret;
           connection_id;
           next_batch_id = 1l;
+          config = my_configuration;
         }
       in
       Lwt.return session
@@ -732,7 +796,8 @@ module Kinetic = struct
         ~forced
 
     =
-    Lwt_log.debug_f ~section "batch_put %s ~forced:%s" (entry2s entry)
+    Lwt_log.debug_f ~section "batch_put %s ~forced:%s"
+                    (entry_to_string entry)
             (bo2s forced)
     >>= fun () ->
     let open Batch in
