@@ -1,5 +1,28 @@
+module Config: sig
+    type t = {
+        vendor: string;
+        model:string;
+        serial_number: string;
+        world_wide_name: string;
+        version: string;
+        (* limits *)
+        max_key_size:int;
+        max_value_size: int;
+        max_version_size:int;
+      }
+    (*
+
+    val make : vendor:string ->
+               model:string ->
+               serial_number:string ->
+               world_wide_name:string ->
+               version: string -> t
+     *)
+  end
+
 module Kinetic : sig
     type session
+
     type batch
     type connection = Lwt_io.input_channel * Lwt_io.output_channel
 
@@ -13,12 +36,15 @@ module Kinetic : sig
         new_version: version;
         vo : value option;
       }
-
+    val entry_to_string: entry -> string
     type rc
     type handler = rc -> unit Lwt.t
     exception Kinetic_exc of (int * bytes)
 
     val convert_rc : rc -> (int * bytes) option
+
+    val get_config : session -> Config.t
+
     val make_entry :
       key:key ->
       db_version:version ->
