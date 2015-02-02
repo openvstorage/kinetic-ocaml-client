@@ -22,8 +22,12 @@ module Config: sig
 
 module Kinetic : sig
     type session
+    val get_connection_id : session -> int64
+
 
     type batch
+    val get_batch_id : batch -> int32
+
     type connection = Lwt_io.input_channel * Lwt_io.output_channel
 
     type key = bytes

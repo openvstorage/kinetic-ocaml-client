@@ -110,16 +110,29 @@ let status_code2s = function
   | _ -> "??? status"
 
 let status_code2i = function
-  | `invalid_status_code -> -1
-  | `not_attempted -> 0
-  | `success -> 1
-  | `hmac_failure -> 2
-  | `not_authorized -> 3
-  | `version_failure -> 4
-  | `internal_error -> 5
-  | `header_required -> 6
-  | `not_found -> 7
-  | `version_mismatch -> 8
+  | `invalid_status_code     -> -1
+  | `not_attempted           ->  0 (* p2p *)
+  | `success                 ->  1
+  | `hmac_failure            ->  2
+  | `not_authorized          ->  3
+  | `version_failure         ->  4
+  | `internal_error          ->  5
+  | `header_required         ->  6
+  | `not_found               ->  7
+  | `version_mismatch        ->  8
+  | `service_busy            ->  9
+  | `expired                 -> 10
+  | `data_error              -> 11
+  | `perm_data_error         -> 12
+  | `remote_connection_error -> 13
+  | `no_space                -> 14
+  | `no_such_hmac_algorithm  -> 15
+  | `invalid_request         -> 16
+  | `nested_operation_errors -> 17
+  | `device_locked           -> 18
+  | `device_already_unlocked -> 19
+  | `connection_terminated   -> 20
+  | `invalid_batch           -> 21 (* 3.0.6 *)
   | _ -> 42
 let _get_message_type (command:Command.t) =
   let header = unwrap_option "header" command.header in
@@ -286,13 +299,14 @@ module Session = struct
         identity: int64;
         connection_id: int64;
         mutable sequence: int64;
-        mutable next_batch_id: int32;
+        mutable batch_id: int32;
 
         config : Config.t;
       }
 
 
     let incr_sequence t = t.sequence <- Int64.succ t.sequence
+    let set_sequence t i64 = t.sequence <- i64
 
 end
 
@@ -390,7 +404,13 @@ module Kinetic = struct
 
     type session = Session.t
 
+    let get_connection_id (session:session) =
+      let open Session in session.connection_id
+
+
     type batch = Batch.t
+    let get_batch_id (batch:batch) =
+      let open Batch in batch.batch_id
     type rc = Batch.rc
 
     let convert_rc = function
@@ -436,7 +456,13 @@ module Kinetic = struct
       let header = unwrap_option "command.header" command.header in
       let open Command_header in
       let connection_id = unwrap_option "header.connection_id" header.connection_id in
-      Lwt_log.debug_f ~section "connection_id:%Li" connection_id >>= fun () ->
+      Lwt_log.debug_f ~section "connection_id:%Li"
+                      connection_id
+      >>= fun () ->
+      Lwt_log.debug_f "sequence:%s" (option2s Int64.to_string header.sequence)
+      >>= fun () ->
+      Lwt_log.debug_f "ack_sequence:%s" (option2s Int64.to_string header.sequence)
+      >>= fun () ->
       let () = verify_cluster_version header cluster_version in
       let open Command_body in
       let body = unwrap_option "command.body" command.body in
@@ -479,10 +505,10 @@ module Kinetic = struct
         let open Session in {
           cluster_version;
           identity = 1L;
-          sequence = 0L;
+          sequence = 1L;
           secret;
           connection_id;
-          next_batch_id = 1l;
+          batch_id = 1l;
           config = my_configuration;
         }
       in
@@ -497,7 +523,8 @@ module Kinetic = struct
     let header = default_command_header () in
     let () = header.cluster_version <- Some session.cluster_version in
     let () = header.connection_id <- Some session.connection_id in
-    let () = header.ack_sequence <- Some session.sequence in
+    let () = header.sequence <- Some session.sequence in
+    (*let () = header.ack_sequence <- Some session.sequence in *)
     let () = command.header <- Some header in
 
     let body = default_command_body () in
@@ -558,7 +585,7 @@ module Kinetic = struct
     let header = default_command_header () in
     header.cluster_version <- Some session.cluster_version;
     header.connection_id <- Some session.connection_id;
-    header.ack_sequence <- Some session.sequence;
+    header.sequence <- Some session.sequence;
     header.batch_id <- Some batch_id;
 
     let () = command.header <- Some header in
@@ -629,27 +656,38 @@ module Kinetic = struct
     let msg = make_get session k in
     network_send oc msg None >>= fun () ->
     network_receive ic >>= fun (r,vo) ->
+
     let command = _parse_command r in
     _assert_type command  `get_response;
+
     let status = _get_status command in
     let code = _get_status_code status in
     let () = Session.incr_sequence session in
+
     match code with
-    | `not_found -> Lwt.return None
+    | `not_found ->
+       Lwt_log.debug_f "`not_found" >>= fun () ->
+       Lwt.return None
     | `success    ->
-       let value = unwrap_option "value" vo in
-       let version =
-         let body = unwrap_option "body" command.body in
-         let open Command_key_value in
-         let kv = unwrap_option "kv" body.key_value in
-         let db_version = kv.db_version in
-         db_version
-       in
-       let r = Some (value, version) in
-       Lwt.return r
+       Lwt_log.debug_f "`success" >>= fun () ->
+       begin
+         match vo with
+         | None -> Lwt.return None (* we get here as well... ? *)
+         | Some value ->
+            begin
+              let version =
+                let body = unwrap_option "body" command.body in
+                let open Command_key_value in
+                let kv = unwrap_option "kv" body.key_value in
+                let db_version = kv.db_version in
+                db_version
+              in
+              let r = Some (value, version) in
+              Lwt.return r
+            end
+       end
     | x ->
-       let (int_code:int) = Obj.magic x in
-       Lwt_log.info_f ~section "x=%i\n%!" int_code >>= fun () ->
+       Lwt_log.info_f ~section "code=%i" (status_code2i x) >>= fun () ->
        let sm = _get_status_message status in
        Lwt.fail (Failure sm)
 
@@ -724,8 +762,8 @@ module Kinetic = struct
         ?(handler = default_handler)
         session (ic,oc) =
     let open Session in
-    let batch_id = session.next_batch_id in
-    let () = session.next_batch_id <- Int32.succ batch_id in
+    let batch_id = session.batch_id in
+    let () = session.batch_id <- Int32.succ batch_id in
     let msg = make_start_batch session batch_id in
     network_send oc msg None >>= fun () ->
     let batch = Batch.make session (ic,oc) batch_id in
@@ -748,7 +786,7 @@ module Kinetic = struct
     let oc = snd batch.conn in
     network_send oc msg None >>= fun () ->
     Batch.close batch >>= fun () ->
-    Session . incr_sequence session;
+    Session.incr_sequence batch.session;
     Lwt.return batch.conn
 
 
@@ -764,6 +802,7 @@ module Kinetic = struct
       let header = default_command_header () in
       header.cluster_version <- Some session.cluster_version;
       header.connection_id <- Some session.connection_id;
+      header.sequence <- Some session.sequence;
       header.ack_sequence <- Some session.sequence;
 
       (* batch_id *)
