@@ -36,9 +36,21 @@ let batch_ops2 session conn =
              ~new_version:(Some "ZZZ")
              (Some "ZZZ")
   in
-  Kinetic.batch_put batch pe ~forced:None >>= fun () ->
+  Kinetic.batch_put batch pe ~forced:(Some true) >>= fun () ->
   Kinetic.end_batch_operation batch
 
+
+let batch_ops3 session conn =
+  Kinetic.start_batch_operation session conn >>= fun batch ->
+  let de =
+    Kinetic.make_entry
+      ~key:"I do not exist"
+      ~db_version:None
+      ~new_version:None
+      None
+  in
+  Kinetic.batch_delete batch de ~forced:None >>= fun () ->
+  Kinetic.end_batch_operation batch
 
 let put_get_delete_test session conn =
 
@@ -143,7 +155,7 @@ let peer2peer_test session conn =
 
 let () =
   let make_socket_address h p = Unix.ADDR_INET(Unix.inet_addr_of_string h, p) in
-  let sa = make_socket_address "127.0.0.1" 8123 in
+  let sa = make_socket_address "127.0.0.1" 11000 in
   let t =
     let secret = "asdfasdf" in
     let cluster_version = 0L in
@@ -159,13 +171,20 @@ let () =
        Lwt_io.printlf "max_key_size:%i" config.max_key_size         >>= fun ()->
        Lwt_io.printlf "max_value_size:%i" config.max_value_size     >>= fun ()->
        Lwt_io.printlf "max_version_size:%i" config.max_version_size >>= fun ()->
-       put_get_delete_test session conn >>= fun () ->
-       put_version_test session conn >>= fun () ->
-       fill session conn 1000 >>= fun () ->
+
+       Kinetic.get session conn "I do not exist?"  >>= fun vo ->
+
+       (*put_get_delete_test session conn >>= fun () -> *)
+       (*put_version_test session conn >>= fun () -> *)
+       (*fill session conn 1000 >>= fun () ->
        Lwt_io.printlf "range:" >>= fun () ->
        range_test session conn >>= fun () ->
-       batch_ops1 session conn >>= fun conn ->
+        *)
+       (*batch_ops1 session conn >>= fun conn -> *)
+(*
        batch_ops2 session conn >>= fun conn ->
+       batch_ops3 session conn >>= fun conn ->
+ *)
 (*
        Kinetic.noop session conn >>= fun () ->
        peer2peer_test session conn

@@ -43,7 +43,7 @@ module Kinetic : sig
     val entry_to_string: entry -> string
     type rc
     type handler = rc -> unit Lwt.t
-    exception Kinetic_exc of (int * bytes)
+    exception Kinetic_exc of (int * bytes) list
 
     val convert_rc : rc -> (int * bytes) option
 

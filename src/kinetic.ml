@@ -445,7 +445,7 @@ module Kinetic = struct
       let open Session in
       session.config
 
-    exception Kinetic_exc of (int * bytes)
+    exception Kinetic_exc of (int * bytes) list
 
     let handshake secret cluster_version (ic,oc) =
       network_receive ic >>= fun (m,vo) ->
@@ -756,7 +756,7 @@ module Kinetic = struct
     | Ok       -> Lwt_log.debug  ~section "default_handler ok"
     | Nok(i,sm) -> Lwt_log.info_f ~section "NOK!: rc:%i; sm=%S"  i sm
                   >>= fun () ->
-                  Lwt.fail (Kinetic_exc (i,sm))
+                  Lwt.fail (Kinetic_exc [i,sm])
 
   let start_batch_operation
         ?(handler = default_handler)
