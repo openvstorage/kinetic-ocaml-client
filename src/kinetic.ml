@@ -671,20 +671,20 @@ module Kinetic = struct
     | `success    ->
        Lwt_log.debug_f "`success" >>= fun () ->
        begin
-         match vo with
-         | None -> Lwt.return None (* we get here as well... ? *)
-         | Some value ->
-            begin
-              let version =
-                let body = unwrap_option "body" command.body in
-                let open Command_key_value in
-                let kv = unwrap_option "kv" body.key_value in
-                let db_version = kv.db_version in
-                db_version
-              in
-              let r = Some (value, version) in
-              Lwt.return r
-            end
+         let version =
+           let body = unwrap_option "body" command.body in
+           let open Command_key_value in
+           let kv = unwrap_option "kv" body.key_value in
+           let db_version = kv.db_version in
+           db_version
+         in
+         let v =
+           match vo with
+           | None -> ""
+           | Some value -> value
+         in
+         let r = Some(v, version) in
+         Lwt.return r
        end
     | x ->
        Lwt_log.info_f ~section "code=%i" (status_code2i x) >>= fun () ->
