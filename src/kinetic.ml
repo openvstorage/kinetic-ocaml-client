@@ -333,7 +333,8 @@ struct
 
   let remove t h = Hashtbl.remove t h
 
-  let make session (ic,oc) batch_id =
+  let make session conn batch_id =
+    let ic,oc = conn in
     let handlers = Hashtbl.create 5 in
     let mvar = Lwt_mvar.create_empty () in
     let rec loop (go:bool ref) (ic:Lwt_io.input_channel) =
@@ -379,9 +380,22 @@ struct
         end
     in
     let go = ref true in
-    let t = loop go ic in
+    let t =
+      Lwt.catch
+        (fun () ->loop go ic )
+        (fun exn ->
+         Lwt_log.debug_f ~exn ~section "batch loop for %li failed" batch_id
+         >>= fun ()->
+         let rci = status_code2i `internal_error in
+         let rc_bad = Nok (rci, Printexc.to_string exn) in
+         Hashtbl.iter (fun k h ->
+                       Lwt.ignore_result (h rc_bad);
+                      ) handlers;
+         Lwt.return ()
+        )
+    in
     let () = Lwt.ignore_result t in
-    { mvar  ; handlers ; conn = (ic,oc) ; batch_id; go = go; session}
+    { mvar  ; handlers ; conn; batch_id; go = go; session}
 
   let add_handler t typ h =
     let typs = message_type2s typ in

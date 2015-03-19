@@ -88,7 +88,9 @@ module Kinetic : sig
 
    (**
        Batches are atomic multi-updates.
-       (while you're doing a batch, you're not supposed to use the connection )
+       Remark:
+       - while you're doing a batch, you're not supposed to use the connection
+       - handlers should not raise exceptions as these have no where to go.
     *)
    val start_batch_operation :
      ?handler:handler ->

@@ -4,11 +4,6 @@ This is an OCaml client for [Seagate's Kinetic drives](https://developers.seagat
 Currently, it uses protocol version 3.0.6.
 This is corresponds with version 0.8.0.3 of the Java Simulator.
 
-Todo:
-- [X] support 3.X protocol
-- [ ] use 4.0.2 Bytes iso strings for buffers (depends on piqi)
-- [X] opam installable
-- [ ] publish 0.0.3 on opam repo
 
 Installation
 ============
