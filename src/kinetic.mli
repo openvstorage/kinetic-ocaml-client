@@ -41,6 +41,12 @@ module Kinetic : sig
         vo : value option;
       }
     val entry_to_string: entry -> string
+
+    type synchronization =
+      | WRITETHROUGH
+      | WRITEBACK
+      | FLUSH
+
     type rc
     type handler = rc -> unit Lwt.t
     exception Kinetic_exc of (int * bytes) list
@@ -71,14 +77,15 @@ module Kinetic : sig
              -> db_version:version
              -> new_version:version
              -> forced:bool option
+             -> synchronization : synchronization option
              -> unit Lwt.t
 
     val delete_forced: session -> connection ->
-                key -> unit Lwt.t
+                       key -> unit Lwt.t
 
     val get : session -> connection -> key -> (value * version) option Lwt.t
 
-    (*val noop: session -> connection -> unit Lwt.t *)
+    val noop: session -> connection -> unit Lwt.t
 
     val get_key_range: session -> connection ->
                        key -> bool ->
@@ -96,15 +103,9 @@ module Kinetic : sig
      ?handler:handler ->
      session -> connection -> batch Lwt.t
 
-   val batch_put :
-     ?handler:handler ->
-     batch -> entry -> forced:bool option
-     -> unit Lwt.t
+   val batch_put  :  batch -> entry -> forced:bool option -> unit Lwt.t
 
-   val batch_delete:
-     ?handler:handler ->
-     batch -> entry -> forced: bool option
-     -> unit Lwt.t
+   val batch_delete: batch -> entry -> forced:bool option -> unit Lwt.t
 
    val end_batch_operation :
      ?handler:handler ->
