@@ -31,9 +31,14 @@ let to_hex = function
      String.iter (fun c -> Buffer.add_string buf (hex c)) s;
      Buffer.sub buf 0 (n_chars - 1)
 
+
 let unwrap_option msg = function
   | None -> failwith ("None " ^ msg)
   | Some x -> x
+
+let map_option f = function
+  | None -> None
+  | Some x -> Some (f x)
 
 let option2s x2s = function
   | None -> "None"
@@ -425,6 +430,10 @@ module Kinetic = struct
     type batch = Batch.t
     let get_batch_id (batch:batch) =
       let open Batch in batch.batch_id
+    type synchronization =
+      |WRITETHROUGH
+      |WRITEBACK
+      |FLUSH
     type rc = Batch.rc
 
     let convert_rc = function
@@ -564,6 +573,7 @@ module Kinetic = struct
                      ~db_version
                      ~new_version
                      ~forced
+                     ~synchronization
                      (body:Command_body.t)
     =
     let open Command_key_value in
@@ -573,6 +583,13 @@ module Kinetic = struct
     kv.db_version <- db_version;
     kv.new_version <- new_version;
     body.key_value <- Some kv;
+    let translate = function
+      | WRITETHROUGH -> `writethrough
+      | WRITEBACK -> `writeback
+      | FLUSH     -> `flush
+    in
+    let sync = map_option translate synchronization in
+    kv.synchronization <- sync;
     ()
 
   let make_delete_forced session key =
@@ -580,14 +597,21 @@ module Kinetic = struct
                             ~db_version:None
                             ~new_version:None
                             ~forced:(Some true)
+                            ~synchronization:(Some WRITEBACK)
     in
     make_serialized_msg session `delete mb
 
-  let make_put session key value ~db_version ~new_version ~forced =
-    let mb = set_attributes ~ko:(Some key)
-                            ~db_version
-                            ~new_version
-                            ~forced
+  let make_put session key value
+               ~db_version ~new_version
+               ~forced ~synchronization
+    =
+    let mb =
+      set_attributes
+        ~ko:(Some key)
+        ~db_version
+        ~new_version
+        ~forced
+        ~synchronization
     in
     make_serialized_msg session `put mb
 
@@ -635,8 +659,14 @@ module Kinetic = struct
   let put session (ic,oc) k value
           ~db_version ~new_version
           ~forced
+          ~synchronization
     =
-    let msg = make_put session k value ~db_version ~new_version ~forced in
+    let msg =
+      make_put
+        session k value
+        ~db_version ~new_version
+        ~forced ~synchronization
+    in
     network_send oc msg (Some value) >>= fun () ->
     network_receive ic >>= fun (r,vo) ->
     assert (vo = None);
@@ -663,6 +693,7 @@ module Kinetic = struct
                             ~db_version:None
                             ~new_version:None
                             ~forced:None
+                            ~synchronization:None
     in
     make_serialized_msg session `get mb
 
@@ -767,10 +798,10 @@ module Kinetic = struct
   let default_handler rc =
     let open Batch in
     match rc with
-    | Ok       -> Lwt_log.debug  ~section "default_handler ok"
-    | Nok(i,sm) -> Lwt_log.info_f ~section "NOK!: rc:%i; sm=%S"  i sm
-                  >>= fun () ->
-                  Lwt.fail (Kinetic_exc [i,sm])
+    | Ok        -> Lwt_log.debug  ~section "default_handler ok"
+    | Nok(i,sm) ->
+       Lwt_log.info_f ~section "NOK!: rc:%i; sm=%S"  i sm >>= fun () ->
+       Lwt.fail (Kinetic_exc [i,sm])
 
   let start_batch_operation
         ?(handler = default_handler)
@@ -827,7 +858,9 @@ module Kinetic = struct
       set_attributes ~ko:(Some entry.key)
                      ~db_version:entry.db_version
                      ~new_version:entry.new_version
-                     ~forced body;
+                     ~forced
+                     ~synchronization:None
+                     body;
       command.body <- Some body;
       let m = default_message () in
       header.message_type <- Some mt;
@@ -844,15 +877,10 @@ module Kinetic = struct
 
 
   let batch_put
-        ?(handler = default_handler)
         (batch:Batch.t) entry
         ~forced
-
     =
-    Lwt_log.debug_f ~section "batch_put %s ~forced:%s"
-                    (entry_to_string entry)
-            (bo2s forced)
-    >>= fun () ->
+    Lwt_log.debug_f ~section "batch_put %s" (entry_to_string entry) >>= fun () ->
     let open Batch in
     let msg = make_batch_msg
                 batch.session
@@ -861,10 +889,6 @@ module Kinetic = struct
                 entry
                 ~forced
     in
-    Batch.add_handler
-      batch `put_response  handler
-
-    >>= fun () ->
     let (ic,oc) = batch.conn in
     network_send oc msg (entry.vo) >>= fun () ->
     Session.incr_sequence batch.session;
@@ -872,7 +896,6 @@ module Kinetic = struct
 
 
   let batch_delete
-        ?(handler = default_handler)
         (batch:Batch.t)
         entry
         ~forced
@@ -884,25 +907,22 @@ module Kinetic = struct
                              entry
                              ~forced
     in
-    Batch.add_handler batch `delete_response handler
-    >>= fun () ->
-
     let (ic,oc) = batch.conn in
     network_send oc msg None >>= fun () ->
     Session.incr_sequence batch.session;
     Lwt.return ()
-(*
-
-    let make_noop session =
-      make_serialized_msg session `noop (set_ko None)
-    let make_set session key    =
-      make_serialized_msg session `put  (set_ko (Some key))
-    let make_delete session key =
-      make_serialized_msg session `delete (set_ko (Some key))
 
 
+  let make_noop session =
+    let mb = set_attributes ~ko:None
+                            ~db_version:None
+                            ~new_version:None
+                            ~forced:None
+                            ~synchronization:None
+    in
+    make_serialized_msg session `noop mb
 
-
+  (*
 
     let make_p2p_push session (host,port,tls) operations =
       let open Message_p2_poperation in
@@ -931,22 +951,20 @@ module Kinetic = struct
       in
       make_serialized_msg session `peer2_peerpush manip
 
-
-
+ *)
     let noop session (ic,oc) =
       let msg = make_noop session in
       let vo = None in
       network_send oc msg vo >>= fun () ->
-      Lwt_log.debug "done sending" >>= fun () ->
+      Lwt_log.debug "sent noop" >>= fun () ->
       network_receive ic >>= fun (r,vo) ->
       assert (vo = None);
-      _assert_type r `noop_response;
-      _assert_success r;
-
-      let () = incr_session session in
+      let command = _parse_command r in
+      let () = Session.incr_sequence session in
+      _assert_both command `noop_response `success;
       Lwt.return ()
 
-
+(*
 
 
 
