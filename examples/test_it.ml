@@ -12,7 +12,13 @@ open Kinetic
 
 let lwt_test name (f:unit -> unit Lwt.t) : bool Lwt.t=
   Lwt_log.debug_f "starting:%s" name >>= fun () ->
-  let timeout = 60. (* Simulator isn't that fast (FLUSH | WRITETHROUGH) *) in
+  let timeout = 300.
+  (* overkill value, but:
+     the simulator isn't that fast (FLUSH | WRITETHROUGH)
+     and we sometimes need to test the real drives
+     via ssh port forwarding.
+   *)
+  in
   Lwt.catch
      (fun () ->
       Lwt_unix.with_timeout timeout f
@@ -37,14 +43,18 @@ let test_noop session conn =
   Kinetic.noop session conn
 
 let batch_ops1 session conn : unit Lwt.t=
-  Kinetic.start_batch_operation session conn >>= fun batch ->
+  Kinetic.start_batch_operation session conn
+  >>= fun batch ->
+  let v = "XXX" in
+  let tag = Kinetic.make_sha1 v in
   let pe = Kinetic.make_entry
              ~key:"xxx"
              ~db_version:None
              ~new_version:None
-             (Some "XXX")
+             (Some (v, tag))
   in
   Kinetic.batch_put batch pe  ~forced:(Some true) >>= fun () ->
+
   let de = Kinetic.make_entry
              ~key:"xxx"
              ~db_version:None
@@ -57,11 +67,13 @@ let batch_ops1 session conn : unit Lwt.t=
 
 let batch_ops2 session conn =
   Kinetic.start_batch_operation session conn >>= fun batch ->
+  let v = "ZZZ" in
+  let tag = Kinetic.make_sha1 v in
   let pe = Kinetic.make_entry
              ~key:"zzz"
              ~db_version:None
              ~new_version:(Some "ZZZ")
-             (Some "ZZZ")
+             (Some (v,tag))
   in
   Kinetic.batch_put batch pe ~forced:(Some true) >>= fun () ->
   Kinetic.end_batch_operation batch >>= fun conn ->
@@ -78,25 +90,32 @@ let batch_ops3 session conn =
       None
   in
   Kinetic.batch_delete batch de ~forced:None >>= fun () ->
-  Kinetic.end_batch_operation batch >>= fun conn ->
+  Lwt_log.debug_f "delete sent" >>= fun () ->
+  Kinetic.end_batch_operation batch >>= fun (ok, conn) ->
+  assert (ok = true);
+  Lwt_log.debug_f "end_batch sent" >>= fun () ->
   Lwt.return ()
 
 let test_put_get_delete session conn =
   let rec loop i =
-    if i = 1000
+    if i = 400
     then Lwt.return ()
     else
       let key = Printf.sprintf "x_%05i" i  in
       let value = Printf.sprintf "value_%05i" i in
       let synchronization = Some Kinetic.WRITEBACK in
+      Lwt_io.printlf "drive[%S] <- Some %S%!" key value >>= fun () ->
+      let tag = Kinetic.make_sha1 value in
+
       Kinetic.put session conn key value
                   ~db_version:None
                   ~new_version:None
                   ~forced:None
+                  ~tag
                   ~synchronization
       >>= fun () ->
       Kinetic.get session conn key >>= fun vco ->
-      Lwt_io.printlf "drive[%S]=%s" key (vco2s vco) >>= fun () ->
+      Lwt_io.printlf "drive[%S]=%s%!" key (vco2s vco) >>= fun () ->
       let () = match vco with
       | None -> failwith "should be present"
       | Some (value2, version) ->
@@ -118,6 +137,7 @@ let test_put_version session conn =
   let key = "with_version" in
   Kinetic.delete_forced session conn key >>= fun () ->
   let value = "the_value" in
+  let tag = Kinetic.make_sha1 value in
   let version = Some "0" in
   let synchronization = Some Kinetic.FLUSH in
   Kinetic.put session conn key value
@@ -125,6 +145,7 @@ let test_put_version session conn =
               ~db_version:None
               ~forced:(Some true)
               ~synchronization
+              ~tag
   >>= fun () ->
   Kinetic.get session conn key >>= fun vco ->
   Lwt_io.printlf "vco=%s" (vco2s vco) >>= fun () ->
@@ -132,10 +153,13 @@ let test_put_version session conn =
     Lwt.catch
       (fun () ->
        let new_version = Some "1" in
-       Kinetic.put session conn key "next_value"
+       let value2 = "next_value" in
+       let tag2 = Kinetic.make_sha1 value2 in
+       Kinetic.put session conn key value2
                    ~db_version:new_version ~new_version
                    ~forced:None
                    ~synchronization
+                   ~tag:tag2
        >>= fun () ->
        Lwt.return false
       )
@@ -156,12 +180,18 @@ let fill session conn n =
     else
       let key = Printf.sprintf "x_%05i" i in
       let v = Printf.sprintf "value_%05i" i in
+      let tag = Kinetic.make_sha1 v in
+      begin
+        if i mod 100 = 0 then Lwt_io.printlf "i:%i" i else Lwt.return ()
+      end
+      >>= fun ()->
       Kinetic.put
         session conn key v
         ~db_version:None
         ~new_version:None
         ~forced:(Some true)
         ~synchronization
+        ~tag
       >>= fun () ->
       loop (i+1)
   in
@@ -173,13 +203,23 @@ let range_test session conn =
   fill session conn 1000 >>= fun () ->
   Kinetic.get_key_range
     session conn
-    "x" true "y" true true 20
+    "x" true "y" true false 20
   >>= fun keys ->
-  Lwt_io.printlf "[%s]\n" (String.concat "; " keys) >>= fun () ->
+  Lwt_io.printlf "[%s]\n%!" (String.concat "; " keys) >>= fun () ->
+  assert (List.length keys = 20);
+  assert (List.hd keys= "x_00000");
+  Lwt.return ()
+
+let range_test_reverse session conn =
+  fill session conn 1000 >>= fun () ->
+  Kinetic.get_key_range
+    session conn
+    "y" true "x" true true 20
+  >>= fun keys ->
+  Lwt_io.printlf "[%s]\n%!" (String.concat "; " keys) >>= fun () ->
   assert (List.length keys = 20);
   assert (List.hd keys= "x_00999");
   Lwt.return ()
-
 (*
 let peer2peer_test session conn =
   let peer = "192.168.11.102", 8000, false in
@@ -195,7 +235,7 @@ let peer2peer_test session conn =
 
 let () =
   let make_socket_address h p = Unix.ADDR_INET(Unix.inet_addr_of_string h, p) in
-  let sa = make_socket_address "127.0.0.1" 11000 in
+  let sa = make_socket_address "127.0.0.1" 8000 in
   let t =
     let secret = "asdfasdf" in
     let cluster_version = 0L in
@@ -224,16 +264,16 @@ let () =
        in
        run_tests
          [
-           "get_non_existing",test_get_non_existing;
-           "noop", test_noop;
-           "put_get_delete", test_put_get_delete;
-
-           "put_version", test_put_version;
-           "range_test", range_test;
-           "batch_ops1", batch_ops1;
-           "batch_ops2", batch_ops2;
-           "batch_ops3", batch_ops3;
-           (*"peer2peer", peer2peer_test;*)
+         "get_non_existing",test_get_non_existing;
+         "noop", test_noop;
+         "put_get_delete", test_put_get_delete;
+         "put_version", test_put_version;
+         "range_test", range_test;
+         "range_test_reverse", range_test_reverse;
+         "batch_ops1", batch_ops1;
+         "batch_ops2", batch_ops2;
+         "batch_ops3", batch_ops3;
+         (*"peer2peer", peer2peer_test;*)
          ]
        >>= fun results ->
        Lwt_list.iter_s

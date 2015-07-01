@@ -46,6 +46,7 @@ let option2s x2s = function
 
 let so2s = option2s (fun x -> x)
 let bo2s = option2s (function | true -> "true" | false -> "false")
+let pair2s x2s y2s (x,y) = Printf.sprintf "(%s, %s)" (x2s x) (y2s y)
 
 let trimmed x =
   let x', post =
@@ -104,7 +105,7 @@ let message_type2s = function
 let status_code2s = function
   | `invalid_status_code -> "invalid_status_code"
   | `not_attempted -> "not_attempted"
-  | `success   -> "success"
+  | `success -> "success"
   | `hmac_failure -> "hmac_failure"
   | `not_authorized -> "not_authorized"
   | `version_failure -> "version_failure"
@@ -112,6 +113,14 @@ let status_code2s = function
   | `header_required -> "header_required"
   | `not_found -> "not_found"
   | `version_mismatch -> "version_mismatch"
+  | `service_busy -> "service_busy"
+  | `expired -> "expired"
+  | `data_error -> "data_error"
+  | `perm_data_error -> "perm_data_error"
+  | `remote_connection_error ->"remove_connection_error"
+  | `no_space -> "no_space"
+  | `no_such_hmac_algorithm -> "no_such_hmac_algorithm"
+  | `invalid_request -> "invalid_request"
   | _ -> "??? status"
 
 let status_code2i = function
@@ -219,8 +228,9 @@ let network_receive ic =
   assert (magic = 'F');
   let proto_raw = Bytes.create proto_ln in
   Lwt_io.read_into_exactly ic proto_raw 0 proto_ln >>= fun () ->
-  (*Lwt_io.printlf "proto_raw:\n%s" (to_hex proto_raw) >>= fun () -> *)
-
+(*
+  Lwt_io.printlf "received: proto_raw:\n%s%!" (to_hex proto_raw) >>= fun () ->
+*)
   maybe_read_value ic value_ln >>= fun vo ->
   let buf = Piqirun.init_from_string proto_raw in
   let m = parse_message buf in
@@ -230,7 +240,7 @@ let network_receive ic =
 let network_send oc proto_raw vo =
   let prelude = Bytes.create 9 in
   Bytes.set prelude 0 'F';
-  (*Lwt_log.debug_f "proto_raw:%s\n" (to_hex proto_raw) >>= fun () -> *)
+
   _encode_fixed32 prelude 1 (String.length proto_raw);
   let write_vo = match vo with
     |None ->
@@ -244,7 +254,10 @@ let network_send oc proto_raw vo =
         fun () -> Lwt_io.write oc v
       end
   in
-  (*Lwt_log.debug_f "prelude:%s\n" (to_hex prelude) >>= fun () ->*)
+  (*
+  Lwt_log.debug_f "sending prelude:%s\n" (to_hex prelude) >>= fun () ->
+  Lwt_log.debug_f "sending proto_raw:%s\n" (to_hex proto_raw) >>= fun () ->
+  *)
   Lwt_io.write oc prelude >>= fun () ->
   Lwt_io.write oc proto_raw >>= fun ()->
   write_vo ()
@@ -322,7 +335,7 @@ struct
 
   type handler = rc -> unit Lwt.t
 
-  type t = { mvar :  unit Lwt_mvar.t;
+  type t = { mvar :  bool Lwt_mvar.t;
              handlers : (command_message_type,
                          rc -> unit Lwt.t) Hashtbl.t;
              conn : Lwt_io.input_channel * Lwt_io.output_channel;
@@ -342,6 +355,7 @@ struct
     let ic,oc = conn in
     let handlers = Hashtbl.create 5 in
     let mvar = Lwt_mvar.create_empty () in
+    let success = ref true in
     let rec loop (go:bool ref) (ic:Lwt_io.input_channel) =
       let size = Hashtbl.length handlers in
       if size > 0 || !go
@@ -361,26 +375,30 @@ struct
                Lwt_log.debug_f ~section "found handler for: %s" typs
                >>= fun () ->
                let () = remove handlers typ in
-                 let status = _get_status command in
-                 let ccode = _get_status_code status in
-                 let rc =
-                   match ccode with
-                   | `success -> Ok
-                   | _ ->
-                      let sm = _get_status_message status in
-                      let dsm = _get_detailed_status_message status in
-                      Lwt_log.ign_debug_f ~section
-                                          "dsm:%S" dsm;
-                      let (rci:int) = status_code2i ccode in
-                      Nok (rci, sm)
-                 in
-                 h rc
+               let status = _get_status command in
+               let ccode = _get_status_code status in
+               let rc =
+                 match ccode with
+                 | `success -> Ok
+                 | _ ->
+                    let sm = _get_status_message status in
+                    let dsm = _get_detailed_status_message status in
+                    Lwt_log.ign_debug_f ~section
+                                        "dsm:%S" dsm;
+                    let (rci:int) = status_code2i ccode in
+                    Nok (rci, sm)
+               in
+               Lwt.catch
+                 (fun () ->h rc)
+                 (fun exn -> go:= false;
+                             success := false;
+                             Lwt.return ())
           end >>= fun ()->
           loop go ic
         end
       else
         begin
-          Lwt_mvar.put mvar () >>= fun () ->
+          Lwt_mvar.put mvar !success >>= fun () ->
           Lwt_log.debug ~section "loop ends here."
         end
     in
@@ -400,7 +418,8 @@ struct
         )
     in
     let () = Lwt.ignore_result t in
-    { mvar  ; handlers ; conn; batch_id; go = go; session}
+    { mvar  ; handlers ; conn; batch_id; go = go;
+      session}
 
   let add_handler t typ h =
     let typs = message_type2s typ in
@@ -411,8 +430,8 @@ struct
   let close t =
     Lwt_log.debug ~section "closing...." >>= fun () ->
     t.go := false;
-    Lwt_mvar.take  t.mvar >>= fun () ->
-    Lwt.return ()
+    Lwt_mvar.take  t.mvar >>= fun success ->
+    Lwt.return success
 end
 
 
@@ -434,11 +453,17 @@ module Kinetic = struct
       |WRITETHROUGH
       |WRITEBACK
       |FLUSH
+    type tag =
+      | Sha1 of Bytes.t
+
     type rc = Batch.rc
 
     let convert_rc = function
       | Batch.Ok -> None
       | Batch.Nok(i,m) -> Some (i,m)
+
+    let tag2s = function
+      | Sha1 h -> Printf.sprintf "Sha1 %s" (to_hex h)
 
     type handler = Batch.handler
 
@@ -449,20 +474,31 @@ module Kinetic = struct
     type connection = Lwt_io.input_channel * Lwt_io.output_channel
 
     type entry = {
-        key:key; db_version:version; new_version : version;
-        vo: value option;
+        key:key;
+        db_version:version;
+        new_version : version;
+        vt: (value * tag) option;
       }
 
+    let make_sha1 v =
+      let h = Cryptokit.Hash.sha1() in
+      let () = h # add_string v in
+      Sha1 (h # result)
+
     let make_entry
-      ~key ~db_version ~new_version vo = { key; db_version; new_version; vo }
+      ~key ~db_version ~new_version vt
+      =
+      { key; db_version; new_version; vt }
 
     let entry_to_string e =
       let so2hs s = option2s (fun x -> Printf.sprintf "0x%s" (to_hex x)) s in
-      Printf.sprintf "{ key=%S; db_version=%s; new_version=%s; vo=%s}"
+      let vt2s = option2s (pair2s trimmed tag2s) in
+      Printf.sprintf "{ key=%S; db_version=%s; new_version=%s; vo=%s }"
                e.key
                (so2hs e.db_version)
                (so2hs e.new_version)
-               (option2s trimmed e.vo)
+               (vt2s e.vt)
+
 
     let get_config (session:Session.t) =
       let open Session in
@@ -564,6 +600,7 @@ module Kinetic = struct
     let hmac_auth = default_message_hmacauth() in
     hmac_auth.identity <- Some session.identity;
     hmac_auth.hmac <- Some hmac;
+    m.auth_type <- Some `hmacauth;
     m.hmac_auth <- Some hmac_auth;
     let proto_raw = Piqirun.to_string(gen_message m) in
     proto_raw
@@ -574,6 +611,7 @@ module Kinetic = struct
                      ~new_version
                      ~forced
                      ~synchronization
+                     ~maybe_tag
                      (body:Command_body.t)
     =
     let open Command_key_value in
@@ -582,6 +620,14 @@ module Kinetic = struct
     kv.force <- forced;
     kv.db_version <- db_version;
     kv.new_version <- new_version;
+    let () = match maybe_tag with
+    | None -> ()
+    | Some tag ->
+       begin
+         match tag with
+         | Sha1 h -> kv.tag <- Some h
+       end
+    in
     body.key_value <- Some kv;
     let translate = function
       | WRITETHROUGH -> `writethrough
@@ -597,13 +643,14 @@ module Kinetic = struct
                             ~db_version:None
                             ~new_version:None
                             ~forced:(Some true)
+                            ~maybe_tag:None
                             ~synchronization:(Some WRITEBACK)
     in
     make_serialized_msg session `delete mb
 
   let make_put session key value
                ~db_version ~new_version
-               ~forced ~synchronization
+               ~forced ~synchronization ~tag
     =
     let mb =
       set_attributes
@@ -612,6 +659,7 @@ module Kinetic = struct
         ~new_version
         ~forced
         ~synchronization
+        ~maybe_tag:(Some tag)
     in
     make_serialized_msg session `put mb
 
@@ -627,15 +675,16 @@ module Kinetic = struct
     header.batch_id <- Some batch_id;
 
     let () = command.header <- Some header in
-    let body = default_command_body () in
+
+    (*let body = default_command_body () in
 
     (* no body manip *)
 
-    let () = command.body <- Some body in
+    let () = command.body <- Some body in *)
+
     let m = default_message () in
 
     let () = header.message_type <- Some mt in
-
 
     let command_bytes = Piqirun.to_string(gen_command command) in
     m.command_bytes <- Some command_bytes;
@@ -643,6 +692,8 @@ module Kinetic = struct
     let hmac_auth = default_message_hmacauth() in
     hmac_auth.identity <- Some session.identity;
     hmac_auth.hmac <- Some hmac;
+
+    m.auth_type <- Some `hmacauth;
     m.hmac_auth <- Some hmac_auth;
     let proto_raw = Piqirun.to_string(gen_message m) in
     proto_raw
@@ -660,12 +711,14 @@ module Kinetic = struct
           ~db_version ~new_version
           ~forced
           ~synchronization
+          ~tag
     =
     let msg =
       make_put
         session k value
         ~db_version ~new_version
         ~forced ~synchronization
+        ~tag
     in
     network_send oc msg (Some value) >>= fun () ->
     network_receive ic >>= fun (r,vo) ->
@@ -694,6 +747,7 @@ module Kinetic = struct
                             ~new_version:None
                             ~forced:None
                             ~synchronization:None
+                            ~maybe_tag:None
     in
     make_serialized_msg session `get mb
 
@@ -703,10 +757,13 @@ module Kinetic = struct
     network_receive ic >>= fun (r,vo) ->
 
     let command = _parse_command r in
-    _assert_type command  `get_response;
+
+    (* _assert_type command  `get_response;*)
 
     let status = _get_status command in
+
     let code = _get_status_code status in
+    Lwt_log.info_f ~section "code=%i" (status_code2i code) >>= fun () ->
     let () = Session.incr_sequence session in
 
     match code with
@@ -723,11 +780,7 @@ module Kinetic = struct
            let db_version = kv.db_version in
            db_version
          in
-         let v =
-           match vo with
-           | None -> ""
-           | Some value -> value
-         in
+         let v = unwrap_option "value" vo in
          let r = Some(v, version) in
          Lwt.return r
        end
@@ -763,13 +816,13 @@ module Kinetic = struct
       make_serialized_msg session `getkeyrange manip
 
   let get_key_range_result (command : Command.t) =
-    try (* it's not me, it's the server *)
-      let body    = unwrap_option "body" command.body in
+    match command.body with
+    | None -> []
+    | Some body ->
       let range   = unwrap_option "range" body.range in
       let open Command_range in
       let (keys:string list) = range.keys in
       keys
-    with Failure _ -> ([]:string list)
 
 
   let get_key_range session (ic,oc)
@@ -824,15 +877,17 @@ module Kinetic = struct
         ?(handler = default_handler)
         (batch:Batch.t)
     =
+    Lwt_log.debug_f ~section "end_batch_operation" >>= fun () ->
     let open Batch in
     let session = batch.session in
     let msg = make_end_batch session batch.batch_id in
     Batch.add_handler batch `end_batch_response handler >>= fun () ->
     let oc = snd batch.conn in
     network_send oc msg None >>= fun () ->
-    Batch.close batch >>= fun () ->
+    Batch.close batch >>= fun success ->
     Session.incr_sequence batch.session;
-    Lwt.return batch.conn
+
+    Lwt.return (success, batch.conn)
 
 
   let make_batch_msg session
@@ -855,11 +910,13 @@ module Kinetic = struct
 
       command.header <- Some header;
       let body = default_command_body () in
+      let maybe_tag = map_option snd entry.vt in
       set_attributes ~ko:(Some entry.key)
                      ~db_version:entry.db_version
                      ~new_version:entry.new_version
                      ~forced
                      ~synchronization:None
+                     ~maybe_tag
                      body;
       command.body <- Some body;
       let m = default_message () in
@@ -870,11 +927,10 @@ module Kinetic = struct
       let hmac_auth = default_message_hmacauth() in
       hmac_auth.identity <- Some session.identity;
       hmac_auth.hmac <- Some hmac;
+      m.auth_type <- Some `hmacauth;
       m.hmac_auth <- Some hmac_auth;
       let proto_raw = Piqirun.to_string(gen_message m) in
       proto_raw
-
-
 
   let batch_put
         (batch:Batch.t) entry
@@ -890,7 +946,8 @@ module Kinetic = struct
                 ~forced
     in
     let (ic,oc) = batch.conn in
-    network_send oc msg (entry.vo) >>= fun () ->
+    let vo = map_option fst entry.vt in
+    network_send oc msg vo >>= fun () ->
     Session.incr_sequence batch.session;
     Lwt.return ()
 
@@ -919,6 +976,7 @@ module Kinetic = struct
                             ~new_version:None
                             ~forced:None
                             ~synchronization:None
+                            ~maybe_tag:None
     in
     make_serialized_msg session `noop mb
 
