@@ -74,8 +74,13 @@ module Kinetic : sig
     val make_crc32 : value -> tag
    (** The initial contact with the device.
        It will send some information that is needed in the session *)
-    val handshake : string -> int64 -> connection -> session Lwt.t
+    val handshake : string -> int64 -> ?trace:bool
+                    -> connection -> session Lwt.t
 
+    (** turn on or of the trace logging of the raw messages
+
+     *)
+    val tracing : session -> bool -> unit
     (** insert a key value pair.
         db_version is the version that's supposed to be the current version
         in the database.

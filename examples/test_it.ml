@@ -281,13 +281,16 @@ let peer2peer_test session conn =
 
 let () =
   let make_socket_address h p = Unix.ADDR_INET(Unix.inet_addr_of_string h, p) in
-  if Array.length Sys.argv < 3
+  if Array.length Sys.argv < 4
   then
     begin
-      Printf.printf "%s <ip> <port>\n%!" Sys.argv.(0);
+      Printf.printf "%s (ip:string) (port:int) (trace:bool)\n%!" Sys.argv.(0);
       exit (-1);
     end;
-  let ip = Sys.argv.(1) and port = int_of_string (Sys.argv.(2)) in
+  let ip = Sys.argv.(1)
+  and port = int_of_string (Sys.argv.(2))
+  and trace = bool_of_string (Sys.argv.(3))
+  in
 
   let sa = make_socket_address ip port in
   let t =
@@ -295,7 +298,7 @@ let () =
     let cluster_version = 0L in
     Lwt_io.with_connection sa
       (fun conn ->
-       Kinetic.handshake secret cluster_version conn >>= fun session ->
+       Kinetic.handshake secret cluster_version conn ~trace>>= fun session ->
        let config = Kinetic.get_config session in
        let open Config in
        Lwt_io.printlf "Config:" >>= fun () ->

@@ -1,5 +1,4 @@
 open Cryptokit
-let _RAW = false
 
 let _decode_fixed32 s off =
   let byte x = int_of_char s.[off + x] in
@@ -64,6 +63,7 @@ open Command_body
 open Command_status
 
 let section = Lwt_log.Section.make "kinetic"
+let tracing = Lwt_log.Section.make "tracing"
 
 let _assert_type (command:Command.t) typ =
   let header  = unwrap_option "header" command.header in
@@ -215,7 +215,7 @@ let maybe_read_value ic value_ln =
          Lwt_io.read_into_exactly ic vb 0 value_ln >>= fun () ->
          Lwt.return (Some vb)
 
-let network_receive ic =
+let network_receive ic trace =
   let msg_bytes = Bytes.create 9 in
   Lwt_io.read_into_exactly ic msg_bytes 0 9 >>= fun () ->
   let magic = msg_bytes.[0] in
@@ -230,8 +230,10 @@ let network_receive ic =
   let proto_raw = Bytes.create proto_ln in
   Lwt_io.read_into_exactly ic proto_raw 0 proto_ln >>= fun () ->
   begin
-    if _RAW
-    then Lwt_io.printlf "received: proto_raw:\n%s%!" (to_hex proto_raw)
+    if trace
+    then Lwt_log.debug_f
+           ~section:tracing
+           "received: %s" (to_hex proto_raw)
     else Lwt.return ()
   end
   >>= fun () ->
@@ -242,7 +244,7 @@ let network_receive ic =
   Lwt.return (m,vo)
 
 
-let network_send oc proto_raw vo =
+let network_send oc proto_raw vo trace =
   let prelude = Bytes.create 9 in
   Bytes.set prelude 0 'F';
 
@@ -260,10 +262,9 @@ let network_send oc proto_raw vo =
       end
   in
   begin
-    if _RAW
+    if trace
     then
-      Lwt_log.debug_f "sending prelude:%s\n" (to_hex prelude) >>= fun () ->
-      Lwt_log.debug_f "sending proto_raw:%s\n" (to_hex proto_raw)
+      Lwt_log.debug_f ~section:tracing "sending: %s\n" (to_hex proto_raw)
     else
       Lwt.return ()
   end
@@ -330,6 +331,7 @@ module Session = struct
         mutable batch_id: int32;
 
         config : Config.t;
+        mutable trace: bool
       }
 
 
@@ -372,7 +374,7 @@ struct
       then
         begin
           Lwt_log.debug ~section "waiting for msg" >>= fun () ->
-          network_receive ic >>= fun (m,vo) ->
+          network_receive ic session.Session.trace >>= fun (m,vo) ->
           Lwt_log.debug ~section "got msg" >>= fun () ->
           let command = _parse_command m in
           let typ = _get_message_type command in
@@ -522,8 +524,8 @@ module Kinetic = struct
 
     exception Kinetic_exc of (int * bytes) list
 
-    let handshake secret cluster_version (ic,oc) =
-      network_receive ic >>= fun (m,vo) ->
+    let handshake secret cluster_version ?(trace = false) (ic,oc)  =
+      network_receive ic trace >>= fun (m,vo) ->
       let () = maybe_verify_msg m in
       let command = _parse_command m in
       let status = unwrap_option "command.status" command.status in
@@ -585,6 +587,7 @@ module Kinetic = struct
           connection_id;
           batch_id = 1l;
           config = my_configuration;
+          trace;
         }
       in
       Lwt.return session
@@ -738,7 +741,15 @@ module Kinetic = struct
   let make_abort_batch session batch_id =
     make_batch_message session `abort_batch batch_id
 
-  let put session (ic,oc) k value
+  let tracing (session:Session.t) t =
+    session.Session.trace <- t
+
+  let _call (ic,oc) msg vo trace =
+    network_send oc msg vo trace >>= fun () ->
+    network_receive ic trace >>= fun (r,vo) ->
+    Lwt.return (r,vo)
+
+  let put session conn k value
           ~db_version ~new_version
           ~forced
           ~synchronization
@@ -751,18 +762,16 @@ module Kinetic = struct
         ~forced ~synchronization
         ~tag
     in
-    network_send oc msg (Some value) >>= fun () ->
-    network_receive ic >>= fun (r,vo) ->
+    _call conn msg (Some value) session.Session.trace >>= fun (r,vo) ->
     assert (vo = None);
     let command = _parse_command r in
     let () = Session.incr_sequence session in
     _assert_both command `put_response `success;
     Lwt.return ()
 
-  let delete_forced session (ic,oc) k =
+  let delete_forced session conn k =
     let msg = make_delete_forced session k in
-    network_send oc msg None >>= fun () ->
-    network_receive ic >>= fun (r, vo) ->
+    _call conn msg None session.Session.trace >>= fun (r, vo) ->
     assert (vo = None);
     let command = _parse_command r in
     let () = Session.incr_sequence session in
@@ -784,8 +793,9 @@ module Kinetic = struct
 
   let get session (ic,oc) k =
     let msg = make_get session k in
-    network_send oc msg None >>= fun () ->
-    network_receive ic >>= fun (r,vo) ->
+    let trace = session.Session.trace in
+    network_send oc msg None trace >>= fun () ->
+    network_receive ic trace >>= fun (r,vo) ->
 
     let command = _parse_command r in
 
@@ -856,7 +866,7 @@ module Kinetic = struct
       keys
 
 
-  let get_key_range session (ic,oc)
+  let get_key_range session conn
                     (start_key:string) sinc
                     (end_key:string) einc
                     (reverse_results:bool)
@@ -865,8 +875,7 @@ module Kinetic = struct
                                  end_key einc reverse_results
                                  max_results
     in
-    network_send oc msg None >>= fun () ->
-    network_receive ic       >>= fun (r,vo) ->
+    _call conn msg None session.Session.trace >>= fun (r,vo) ->
     let command = _parse_command r in
     _assert_type command `getkeyrange_response;
     Session.incr_sequence session;
@@ -894,7 +903,7 @@ module Kinetic = struct
     let batch_id = session.batch_id in
     let () = session.batch_id <- Int32.succ batch_id in
     let msg = make_start_batch session batch_id in
-    network_send oc msg None >>= fun () ->
+    network_send oc msg None session.Session.trace >>= fun () ->
     let batch = Batch.make session (ic,oc) batch_id in
     Batch.add_handler
       batch
@@ -914,7 +923,7 @@ module Kinetic = struct
     let msg = make_end_batch session batch.batch_id in
     Batch.add_handler batch `end_batch_response handler >>= fun () ->
     let oc = snd batch.conn in
-    network_send oc msg None >>= fun () ->
+    network_send oc msg None session.Session.trace >>= fun () ->
     Batch.close batch >>= fun success ->
     Session.incr_sequence batch.session;
 
@@ -978,8 +987,10 @@ module Kinetic = struct
     in
     let (ic,oc) = batch.conn in
     let vo = map_option fst entry.vt in
-    network_send oc msg vo >>= fun () ->
-    Session.incr_sequence batch.session;
+    let session = batch.session in
+    let trace = session.Session.trace in
+    network_send oc msg vo trace >>= fun () ->
+    Session.incr_sequence session;
     Lwt.return ()
 
 
@@ -996,8 +1007,10 @@ module Kinetic = struct
                              ~forced
     in
     let (ic,oc) = batch.conn in
-    network_send oc msg None >>= fun () ->
-    Session.incr_sequence batch.session;
+    let session = batch.session in
+    let trace = session.Session.trace in
+    network_send oc msg None trace >>= fun () ->
+    Session.incr_sequence session;
     Lwt.return ()
 
 
@@ -1041,12 +1054,10 @@ module Kinetic = struct
       make_serialized_msg session `peer2_peerpush manip
 
  *)
-    let noop session (ic,oc) =
+    let noop session conn =
       let msg = make_noop session in
       let vo = None in
-      network_send oc msg vo >>= fun () ->
-      Lwt_log.debug "sent noop" >>= fun () ->
-      network_receive ic >>= fun (r,vo) ->
+      _call conn msg vo session.Session.trace >>= fun (r,vo) ->
       assert (vo = None);
       let command = _parse_command r in
       let () = Session.incr_sequence session in
