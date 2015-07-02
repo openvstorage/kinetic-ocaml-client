@@ -1,7 +1,7 @@
 # -*- conf -*-
 
 description = "Kinetic client"
-version = "0.0.5"
+version = "0.0.6"
 exists_if = "kinetic.cmx,kinetic.cmi,kinetic.mli"
 requires = "threads lwt lwt.unix cryptokit"
 archive(byte) = "kinetic.client.cma"

@@ -1,4 +1,5 @@
 open Cryptokit
+let _RAW = false
 
 let _decode_fixed32 s off =
   let byte x = int_of_char s.[off + x] in
@@ -228,9 +229,13 @@ let network_receive ic =
   assert (magic = 'F');
   let proto_raw = Bytes.create proto_ln in
   Lwt_io.read_into_exactly ic proto_raw 0 proto_ln >>= fun () ->
-(*
-  Lwt_io.printlf "received: proto_raw:\n%s%!" (to_hex proto_raw) >>= fun () ->
-*)
+  begin
+    if _RAW
+    then Lwt_io.printlf "received: proto_raw:\n%s%!" (to_hex proto_raw)
+    else Lwt.return ()
+  end
+  >>= fun () ->
+
   maybe_read_value ic value_ln >>= fun vo ->
   let buf = Piqirun.init_from_string proto_raw in
   let m = parse_message buf in
@@ -254,10 +259,15 @@ let network_send oc proto_raw vo =
         fun () -> Lwt_io.write oc v
       end
   in
-  (*
-  Lwt_log.debug_f "sending prelude:%s\n" (to_hex prelude) >>= fun () ->
-  Lwt_log.debug_f "sending proto_raw:%s\n" (to_hex proto_raw) >>= fun () ->
-  *)
+  begin
+    if _RAW
+    then
+      Lwt_log.debug_f "sending prelude:%s\n" (to_hex prelude) >>= fun () ->
+      Lwt_log.debug_f "sending proto_raw:%s\n" (to_hex proto_raw)
+    else
+      Lwt.return ()
+  end
+    >>= fun () ->
   Lwt_io.write oc prelude >>= fun () ->
   Lwt_io.write oc proto_raw >>= fun ()->
   write_vo ()
@@ -454,7 +464,9 @@ module Kinetic = struct
       |WRITEBACK
       |FLUSH
     type tag =
+      | Invalid of Bytes.t
       | Sha1 of Bytes.t
+      | Crc32 of int32
 
     type rc = Batch.rc
 
@@ -463,7 +475,9 @@ module Kinetic = struct
       | Batch.Nok(i,m) -> Some (i,m)
 
     let tag2s = function
+      | Invalid h -> Printf.sprintf "Invalid %s" (to_hex h)
       | Sha1 h -> Printf.sprintf "Sha1 %s" (to_hex h)
+      | Crc32 h ->Printf.sprintf "Crc32 %lx" h
 
     type handler = Batch.handler
 
@@ -484,6 +498,8 @@ module Kinetic = struct
       let h = Cryptokit.Hash.sha1() in
       let () = h # add_string v in
       Sha1 (h # result)
+
+    let make_crc32 v = failwith "todo"
 
     let make_entry
       ~key ~db_version ~new_version vt
@@ -625,7 +641,21 @@ module Kinetic = struct
     | Some tag ->
        begin
          match tag with
-         | Sha1 h -> kv.tag <- Some h
+         | Invalid h ->
+            begin
+              kv.algorithm <- Some `invalid_algorithm;
+              kv.tag <- Some h;
+            end
+         | Sha1 h ->
+            begin
+              kv.algorithm <- Some `sha1;
+              kv.tag <- Some h
+            end
+         | Crc32 h ->
+            let s = Bytes.create 4 in
+            _encode_fixed32 s 0 (Int32.to_int h);
+            kv.algorithm <- Some `crc32;
+            kv.tag <- Some s
        end
     in
     body.key_value <- Some kv;
@@ -650,7 +680,8 @@ module Kinetic = struct
 
   let make_put session key value
                ~db_version ~new_version
-               ~forced ~synchronization ~tag
+               ~forced ~synchronization
+               ~tag
     =
     let mb =
       set_attributes
@@ -659,7 +690,7 @@ module Kinetic = struct
         ~new_version
         ~forced
         ~synchronization
-        ~maybe_tag:(Some tag)
+        ~maybe_tag:tag
     in
     make_serialized_msg session `put mb
 
@@ -676,11 +707,11 @@ module Kinetic = struct
 
     let () = command.header <- Some header in
 
-    (*let body = default_command_body () in
+    let body = default_command_body () in
 
     (* no body manip *)
 
-    let () = command.body <- Some body in *)
+    let () = command.body <- Some body in
 
     let m = default_message () in
 

@@ -35,7 +35,9 @@ module Kinetic : sig
     type version = bytes option
 
     type tag =
+      | Invalid of Bytes.t
       | Sha1 of Bytes.t
+      | Crc32 of int32
 
     type entry = {
         key: key;
@@ -68,7 +70,8 @@ module Kinetic : sig
       (value * tag) option ->
       entry
 
-    val make_sha1 : value -> tag
+    val make_sha1  : value -> tag
+    val make_crc32 : value -> tag
    (** The initial contact with the device.
        It will send some information that is needed in the session *)
     val handshake : string -> int64 -> connection -> session Lwt.t
@@ -86,7 +89,7 @@ module Kinetic : sig
              -> new_version:version
              -> forced:bool option
              -> synchronization : synchronization option
-             -> tag: tag (*option*)
+             -> tag: tag option
              -> unit Lwt.t
 
     val delete_forced: session -> connection ->

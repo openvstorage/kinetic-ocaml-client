@@ -39,6 +39,20 @@ let test_get_non_existing session conn =
   assert (vo = None);
   Lwt.return ()
 
+let test_put_no_tag session conn =
+  let key = "test_put_no_tag" in
+  let value = key in
+  let synchronization = Some Kinetic.WRITEBACK in
+  Lwt_io.printlf "drive[%S] <- Some %S%!" key value >>= fun () ->
+  Kinetic.put session conn key value
+              ~db_version:None
+              ~new_version:None
+              ~forced:None
+              ~tag:None
+              ~synchronization
+  >>= fun () ->
+  Lwt.return ()
+
 let test_noop session conn =
   Kinetic.noop session conn
 
@@ -96,6 +110,22 @@ let batch_ops3 session conn =
   Lwt_log.debug_f "end_batch sent" >>= fun () ->
   Lwt.return ()
 
+let test_crc32 session conn =
+  let key = "test_crc32_key" in
+  let value = key in
+  (*let tag = Kinetic.Crc32 0xEAE10D3Al in*)
+  let tag = Kinetic.Crc32 0x0l in
+  let synchronization = Some Kinetic.WRITEBACK in
+  Kinetic.put session conn key value
+              ~db_version:None
+              ~new_version:None
+              ~forced:None
+              ~tag:(Some tag)
+              ~synchronization
+              >>= fun () ->
+  Lwt.return ()
+
+
 let test_put_get_delete session conn =
   let rec loop i =
     if i = 400
@@ -111,7 +141,7 @@ let test_put_get_delete session conn =
                   ~db_version:None
                   ~new_version:None
                   ~forced:None
-                  ~tag
+                  ~tag:(Some tag)
                   ~synchronization
       >>= fun () ->
       Kinetic.get session conn key >>= fun vco ->
@@ -133,6 +163,22 @@ let test_put_get_delete session conn =
   in
   loop 0
 
+let test_put_largish session conn =
+  let key = "largish" in
+  let value = Bytes.create 100_000 in
+  let tag = Kinetic.make_sha1 value in
+  let synchronization = Some Kinetic.FLUSH in
+  Kinetic.put session conn key value
+              ~new_version:None
+              ~db_version:None
+              ~forced:(Some true)
+              ~synchronization
+              ~tag:(Some tag)
+  >>=fun () ->
+  Kinetic.get session conn key >>= fun vco ->
+  assert (vco <> None);
+  Lwt.return ()
+
 let test_put_version session conn =
   let key = "with_version" in
   Kinetic.delete_forced session conn key >>= fun () ->
@@ -145,7 +191,7 @@ let test_put_version session conn =
               ~db_version:None
               ~forced:(Some true)
               ~synchronization
-              ~tag
+              ~tag:(Some tag)
   >>= fun () ->
   Kinetic.get session conn key >>= fun vco ->
   Lwt_io.printlf "vco=%s" (vco2s vco) >>= fun () ->
@@ -159,7 +205,7 @@ let test_put_version session conn =
                    ~db_version:new_version ~new_version
                    ~forced:None
                    ~synchronization
-                   ~tag:tag2
+                   ~tag:(Some tag2)
        >>= fun () ->
        Lwt.return false
       )
@@ -191,7 +237,7 @@ let fill session conn n =
         ~new_version:None
         ~forced:(Some true)
         ~synchronization
-        ~tag
+        ~tag:(Some tag)
       >>= fun () ->
       loop (i+1)
   in
@@ -235,7 +281,15 @@ let peer2peer_test session conn =
 
 let () =
   let make_socket_address h p = Unix.ADDR_INET(Unix.inet_addr_of_string h, p) in
-  let sa = make_socket_address "127.0.0.1" 8000 in
+  if Array.length Sys.argv < 3
+  then
+    begin
+      Printf.printf "%s <ip> <port>\n%!" Sys.argv.(0);
+      exit (-1);
+    end;
+  let ip = Sys.argv.(1) and port = int_of_string (Sys.argv.(2)) in
+
+  let sa = make_socket_address ip port in
   let t =
     let secret = "asdfasdf" in
     let cluster_version = 0L in
@@ -264,15 +318,20 @@ let () =
        in
        run_tests
          [
+
          "get_non_existing",test_get_non_existing;
          "noop", test_noop;
          "put_get_delete", test_put_get_delete;
          "put_version", test_put_version;
+         "put_largish", test_put_largish;
          "range_test", range_test;
          "range_test_reverse", range_test_reverse;
          "batch_ops1", batch_ops1;
          "batch_ops2", batch_ops2;
          "batch_ops3", batch_ops3;
+         "crc32", test_crc32;
+         "put_no_tag", test_put_no_tag;
+
          (*"peer2peer", peer2peer_test;*)
          ]
        >>= fun results ->
