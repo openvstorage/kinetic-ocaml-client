@@ -103,7 +103,7 @@ let batch_ops3 session conn =
       ~new_version:None
       None
   in
-  Kinetic.batch_delete batch de ~forced:None >>= fun () ->
+  Kinetic.batch_delete batch de ~forced:(Some true) >>= fun () ->
   Lwt_log.debug_f "delete sent" >>= fun () ->
   Kinetic.end_batch_operation batch >>= fun (ok, conn) ->
   assert (ok = true);
