@@ -34,18 +34,26 @@ module Kinetic : sig
     type value = bytes
     type version = bytes option
 
+    type tag =
+      | Invalid of Bytes.t
+      | Sha1 of Bytes.t
+      | Crc32 of int32
+
     type entry = {
         key: key;
         db_version: version;
         new_version: version;
-        vo : value option;
+        vt : (value * tag )option;
       }
+
     val entry_to_string: entry -> string
 
     type synchronization =
       | WRITETHROUGH
       | WRITEBACK
       | FLUSH
+
+
 
     type rc
     type handler = rc -> unit Lwt.t
@@ -59,12 +67,20 @@ module Kinetic : sig
       key:key ->
       db_version:version ->
       new_version:version ->
-      value option -> entry
+      (value * tag) option ->
+      entry
 
+    val make_sha1  : value -> tag
+    val make_crc32 : value -> tag
    (** The initial contact with the device.
        It will send some information that is needed in the session *)
-    val handshake : string -> int64 -> connection -> session Lwt.t
+    val handshake : string -> int64 -> ?trace:bool
+                    -> connection -> session Lwt.t
 
+    (** turn on or of the trace logging of the raw messages
+
+     *)
+    val tracing : session -> bool -> unit
     (** insert a key value pair.
         db_version is the version that's supposed to be the current version
         in the database.
@@ -78,6 +94,7 @@ module Kinetic : sig
              -> new_version:version
              -> forced:bool option
              -> synchronization : synchronization option
+             -> tag: tag option
              -> unit Lwt.t
 
     val delete_forced: session -> connection ->
@@ -109,7 +126,7 @@ module Kinetic : sig
 
    val end_batch_operation :
      ?handler:handler ->
-     batch -> connection Lwt.t
+     batch -> (bool * connection) Lwt.t
 
   (* (* we might need it again in the future *)
     val p2p_push : session -> connection ->
