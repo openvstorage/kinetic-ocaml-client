@@ -6,7 +6,7 @@
         .name protocolVersion
         .type string
         .optional
-        .default "3.0.6"
+        .default "3.1.0"
         .code 1
     ]
 ]
@@ -219,6 +219,51 @@
         .optional
         .code 8
     ]
+    .field [
+        .name batch
+        .type Command-Batch
+        .optional
+        .code 9
+    ]
+    .field [
+        .name power
+        .type Command-PowerManagement
+        .optional
+        .code 10
+    ]
+]
+
+.record [
+    .name Command-PowerManagement
+    .field [
+        .name level
+        .type Command-PowerLevel
+        .optional
+        .code 1
+    ]
+]
+
+.record [
+    .name Command-Batch
+    .field [
+        .name count
+        .type protobuf-int32
+        .optional
+        .code 1
+    ]
+    .field [
+        .name sequence
+        .type protobuf-int64
+        .repeated
+        .code 2
+        .protobuf-packed
+    ]
+    .field [
+        .name failedSequence
+        .type protobuf-int64
+        .optional
+        .code 3
+    ]
 ]
 
 .record [
@@ -359,6 +404,16 @@
         .name INVALID-BATCH
         .code 21
         .protobuf-name "Command_Status_INVALID_BATCH"
+    ]
+    .option [
+        .name HIBERNATE
+        .code 22
+        .protobuf-name "Command_Status_HIBERNATE"
+    ]
+    .option [
+        .name SHUTDOWN
+        .code 23
+        .protobuf-name "Command_Status_SHUTDOWN"
     ]
 ]
 
@@ -764,6 +819,12 @@
         .optional
         .code 11
     ]
+    .field [
+        .name currentPowerLevel
+        .type Command-PowerLevel
+        .optional
+        .code 18
+    ]
 ]
 
 .record [
@@ -891,7 +952,7 @@
         .code 12
     ]
     .field [
-        .name maxBatchCountPerConnection
+        .name maxBatchCountPerDevice
         .type uint32
         .optional
         .code 13
@@ -1114,6 +1175,11 @@
         .code 8
         .protobuf-name "Command_Security_ACL_SECURITY"
     ]
+    .option [
+        .name POWER-MANAGEMENT
+        .code 9
+        .protobuf-name "Command_Security_ACL_POWER_MANAGEMENT"
+    ]
 ]
 
 .record [
@@ -1231,14 +1297,19 @@
         .protobuf-name "Command_SHA3"
     ]
     .option [
-        .name CRC32
+        .name CRC32C
         .code 4
-        .protobuf-name "Command_CRC32"
+        .protobuf-name "Command_CRC32C"
     ]
     .option [
         .name CRC64
         .code 5
         .protobuf-name "Command_CRC64"
+    ]
+    .option [
+        .name CRC32
+        .code 6
+        .protobuf-name "Command_CRC32"
     ]
 ]
 
@@ -1438,5 +1509,44 @@
         .name ABORT-BATCH-RESPONSE
         .code 45
         .protobuf-name "Command_ABORT_BATCH_RESPONSE"
+    ]
+    .option [
+        .name SET-POWER-LEVEL
+        .code 48
+        .protobuf-name "Command_SET_POWER_LEVEL"
+    ]
+    .option [
+        .name SET-POWER-LEVEL-RESPONSE
+        .code 47
+        .protobuf-name "Command_SET_POWER_LEVEL_RESPONSE"
+    ]
+]
+
+.enum [
+    .name Command-PowerLevel
+    .option [
+        .name INVALID-LEVEL
+        .code -1
+        .protobuf-name "Command_INVALID_LEVEL"
+    ]
+    .option [
+        .name OPERATIONAL
+        .code 1
+        .protobuf-name "Command_OPERATIONAL"
+    ]
+    .option [
+        .name HIBERNATE
+        .code 2
+        .protobuf-name "Command_HIBERNATE"
+    ]
+    .option [
+        .name SHUTDOWN
+        .code 3
+        .protobuf-name "Command_SHUTDOWN"
+    ]
+    .option [
+        .name FAIL
+        .code 4
+        .protobuf-name "Command_FAIL"
     ]
 ]

@@ -101,7 +101,9 @@ let message_type2s = function
   | `delete_response -> "delete_response"
   | `start_batch_response -> "start_batch_response"
   | `end_batch_response -> "end_batch_response"
-  | _ -> "todo ..."
+  | `flushalldata -> "flushalldata"
+  | `flushalldata_response -> "flushalldata_response"
+  | _ -> "TODO: message type2s"
 
 let status_code2s = function
   | `invalid_status_code -> "invalid_status_code"
@@ -122,7 +124,7 @@ let status_code2s = function
   | `no_space -> "no_space"
   | `no_such_hmac_algorithm -> "no_such_hmac_algorithm"
   | `invalid_request -> "invalid_request"
-  | _ -> "??? status"
+  | _ -> "TODO: status_code2s"
 
 let status_code2i = function
   | `invalid_status_code     -> -1
@@ -234,7 +236,7 @@ let network_receive ic trace =
     then Lwt_log.debug_f
            ~section:tracing
            "received: %s" (to_hex proto_raw)
-    else Lwt.return ()
+    else Lwt.return_unit
   end
   >>= fun () ->
 
@@ -354,6 +356,7 @@ struct
              batch_id : int32;
              go : bool ref;
              session : Session.t;
+             mutable count : int;
            }
 
   let find t h =
@@ -431,7 +434,9 @@ struct
     in
     let () = Lwt.ignore_result t in
     { mvar  ; handlers ; conn; batch_id; go = go;
-      session}
+      session; count = 0;}
+
+  let inc_count t = t.count <- t.count + 1
 
   let add_handler t typ h =
     let typs = message_type2s typ in
@@ -697,8 +702,14 @@ module Kinetic = struct
     in
     make_serialized_msg session `put mb
 
+  let _no_manip _ = ()
 
-  let make_batch_message session mt batch_id =
+  let make_flush session =
+    make_serialized_msg session `flushalldata _no_manip
+
+  let make_batch_message
+        ?(body_manip = _no_manip)
+        session mt batch_id =
     let open Message_hmacauth in
     let open Session in
     let command = default_command () in
@@ -712,7 +723,7 @@ module Kinetic = struct
 
     let body = default_command_body () in
 
-    (* no body manip *)
+    let () = body_manip body in
 
     let () = command.body <- Some body in
 
@@ -735,8 +746,16 @@ module Kinetic = struct
   let make_start_batch session batch_id =
     make_batch_message session `start_batch batch_id
 
-  let make_end_batch session batch_id =
-    make_batch_message session `end_batch batch_id
+  let make_end_batch (b:Batch.t) =
+    let open Batch in
+    let body_manip body =
+      let batch = default_command_batch () in
+      let count = b.count in
+      let open Command_batch in
+      batch.count <- Some (Int32.of_int count);
+      body.batch <- Some batch
+    in
+    make_batch_message b.session `end_batch b.batch_id ~body_manip
 
   let make_abort_batch session batch_id =
     make_batch_message session `abort_batch batch_id
@@ -919,14 +938,23 @@ module Kinetic = struct
     =
     Lwt_log.debug_f ~section "end_batch_operation" >>= fun () ->
     let open Batch in
-    let session = batch.session in
-    let msg = make_end_batch session batch.batch_id in
+    let msg = make_end_batch batch in
     Batch.add_handler batch `end_batch_response handler >>= fun () ->
-    let oc = snd batch.conn in
-    network_send oc msg None session.Session.trace >>= fun () ->
-    Batch.close batch >>= fun success ->
-    Session.incr_sequence batch.session;
+    let ic, oc = batch.conn in
+    let session = batch.session in
+    let trace = session.Session.trace in
+    network_send oc msg None trace >>= fun () ->
 
+    let () = Session.incr_sequence session in
+    let flush = make_flush session in
+
+    network_send oc flush None trace >>= fun () ->
+    Batch.close batch >>= fun success ->
+    Session.incr_sequence session;
+    network_receive ic trace >>= fun (flush_result, vo) ->
+    assert (vo = None);
+    let command = _parse_command flush_result in
+    _assert_both command `flushalldata_response `success;
     Lwt.return (success, batch.conn)
 
 
@@ -951,11 +979,12 @@ module Kinetic = struct
       command.header <- Some header;
       let body = default_command_body () in
       let maybe_tag = map_option snd entry.vt in
+      let synchronization = Some WRITETHROUGH in
       set_attributes ~ko:(Some entry.key)
                      ~db_version:entry.db_version
                      ~new_version:entry.new_version
                      ~forced
-                     ~synchronization:None
+                     ~synchronization
                      ~maybe_tag
                      body;
       command.body <- Some body;
@@ -990,8 +1019,9 @@ module Kinetic = struct
     let session = batch.session in
     let trace = session.Session.trace in
     network_send oc msg vo trace >>= fun () ->
+    let () = Batch.inc_count batch in
     Session.incr_sequence session;
-    Lwt.return ()
+    Lwt.return_unit
 
 
   let batch_delete
@@ -1010,6 +1040,7 @@ module Kinetic = struct
     let session = batch.session in
     let trace = session.Session.trace in
     network_send oc msg None trace >>= fun () ->
+    let () = Batch.inc_count batch in
     Session.incr_sequence session;
     Lwt.return ()
 

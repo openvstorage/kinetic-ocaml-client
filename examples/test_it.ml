@@ -56,7 +56,22 @@ let test_put_no_tag session conn =
 let test_noop session conn =
   Kinetic.noop session conn
 
-let batch_ops1 session conn : unit Lwt.t=
+
+let batch_single_put session conn =
+  Kinetic.start_batch_operation session conn >>= fun batch ->
+  let v = "ZZZ" in
+  let tag = Kinetic.make_sha1 v in
+  let pe = Kinetic.make_entry
+             ~key:"zzz"
+             ~db_version:None
+             ~new_version:(Some "ZZZ")
+             (Some (v,tag))
+  in
+  Kinetic.batch_put batch pe ~forced:(Some true) >>= fun () ->
+  Kinetic.end_batch_operation batch >>= fun conn ->
+  Lwt.return ()
+
+let batch_test_put_delete session conn : unit Lwt.t=
   Kinetic.start_batch_operation session conn
   >>= fun batch ->
   let v = "XXX" in
@@ -79,22 +94,8 @@ let batch_ops1 session conn : unit Lwt.t=
   Kinetic.end_batch_operation batch >>= fun conn ->
   Lwt.return ()
 
-let batch_ops2 session conn =
-  Kinetic.start_batch_operation session conn >>= fun batch ->
-  let v = "ZZZ" in
-  let tag = Kinetic.make_sha1 v in
-  let pe = Kinetic.make_entry
-             ~key:"zzz"
-             ~db_version:None
-             ~new_version:(Some "ZZZ")
-             (Some (v,tag))
-  in
-  Kinetic.batch_put batch pe ~forced:(Some true) >>= fun () ->
-  Kinetic.end_batch_operation batch >>= fun conn ->
-  Lwt.return ()
 
-
-let batch_ops3 session conn =
+let batch_delete_non_existing session conn =
   Kinetic.start_batch_operation session conn >>= fun batch ->
   let de =
     Kinetic.make_entry
@@ -109,6 +110,31 @@ let batch_ops3 session conn =
   assert (ok = true);
   Lwt_log.debug_f "end_batch sent" >>= fun () ->
   Lwt.return ()
+
+let batch_3_puts session conn : unit Lwt.t =
+  Kinetic.start_batch_operation session conn
+  >>= fun batch ->
+  let add_put key v =
+    let pe =
+      let tag = Kinetic.make_sha1 v in
+      Kinetic.make_entry
+             ~key
+             ~db_version:None
+             ~new_version:None
+             (Some (v,tag))
+    in
+    Kinetic.batch_put batch pe ~forced:(Some true)
+  in
+  let make_key i = Printf.sprintf "batch_test_3_puts:key_%03i" i in
+  let key0 = make_key 0 in
+  let key1 = make_key 1 in
+  let key2 = make_key 2 in
+  add_put key0 key0 >>= fun () ->
+  add_put key1 key1 >>= fun () ->
+  add_put key2 key2 >>= fun () ->
+  Kinetic.end_batch_operation batch >>= fun (ok, conn) ->
+  assert (ok = true);
+  Lwt.return_unit
 
 let test_crc32 session conn =
   let key = "test_crc32_key" in
@@ -253,18 +279,17 @@ let range_test session conn =
   >>= fun keys ->
   Lwt_io.printlf "[%s]\n%!" (String.concat "; " keys) >>= fun () ->
   assert (List.length keys = 20);
-  assert (List.hd keys= "x_00000");
+  assert (List.hd keys= "x_0000");
   Lwt.return ()
 
 let range_test_reverse session conn =
   fill session conn 1000 >>= fun () ->
-  Kinetic.get_key_range
-    session conn
-    "y" true "x" true true 20
+  (* note the order, which differs from the specs *)
+  Kinetic.get_key_range session conn "x" true "y" true true 20
   >>= fun keys ->
   Lwt_io.printlf "[%s]\n%!" (String.concat "; " keys) >>= fun () ->
   assert (List.length keys = 20);
-  assert (List.hd keys= "x_00999");
+  assert (List.hd keys= "x_0999");
   Lwt.return ()
 (*
 let peer2peer_test session conn =
@@ -329,11 +354,17 @@ let () =
          "put_largish", test_put_largish;
          "range_test", range_test;
          "range_test_reverse", range_test_reverse;
-         "batch_ops1", batch_ops1;
-         "batch_ops2", batch_ops2;
-         "batch_ops3", batch_ops3;
+
+         "batch_single_put", batch_single_put;
+         "batch_put_delete", batch_test_put_delete;
+         "batch_delete_non_existing", batch_delete_non_existing;
+         "batch_3_puts", batch_3_puts;
+
          "crc32", test_crc32;
-         "put_no_tag", test_put_no_tag;
+
+
+        (* "put_no_tag", test_put_no_tag; *)
+
 
          (*"peer2peer", peer2peer_test;*)
          ]
