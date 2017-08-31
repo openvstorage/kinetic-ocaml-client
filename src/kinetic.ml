@@ -40,6 +40,10 @@ let map_option f = function
   | None -> None
   | Some x -> Some (f x)
 
+let get_option default = function
+  | None -> default
+  | Some x -> x
+
 let option2s x2s = function
   | None -> "None"
   | Some x -> Printf.sprintf "Some %s" (x2s x)
@@ -321,6 +325,19 @@ module Config = struct
         max_value_size;
         max_version_size;
       }
+
+    let show t =
+      let buffer = Buffer.create 128 in
+      let add x = Printf.kprintf (fun s -> Buffer.add_string buffer s) x in
+      add "Config {";
+      add " version: %S;" t.version;
+      add " wwn:%S;" t.world_wide_name;
+      add " serial_number:%S;" t.serial_number;
+      add " max_key_size:%i;" t.max_key_size;
+      add " max_value_size:%i;" t.max_value_size;
+      add " max_version_size:%i;" t.max_version_size;
+      add "}";
+      Buffer.contents buffer
 end
 module Session = struct
 
@@ -352,7 +369,7 @@ struct
   type t = { mvar :  bool Lwt_mvar.t;
              handlers : (command_message_type,
                          rc -> unit Lwt.t) Hashtbl.t;
-             conn : Lwt_io.input_channel * Lwt_io.output_channel;
+             connection : Lwt_io.input_channel * Lwt_io.output_channel;
              batch_id : int32;
              go : bool ref;
              session : Session.t;
@@ -366,8 +383,8 @@ struct
 
   let remove t h = Hashtbl.remove t h
 
-  let make session conn batch_id =
-    let ic,oc = conn in
+  let make session connection batch_id =
+    let ic,oc = connection in
     let handlers = Hashtbl.create 5 in
     let mvar = Lwt_mvar.create_empty () in
     let success = ref true in
@@ -433,7 +450,7 @@ struct
         )
     in
     let () = Lwt.ignore_result t in
-    { mvar  ; handlers ; conn; batch_id; go = go;
+    { mvar  ; handlers ; connection; batch_id; go = go;
       session; count = 0;}
 
   let inc_count t = t.count <- t.count + 1
@@ -493,6 +510,13 @@ module Kinetic = struct
     type version = bytes option
 
     type connection = Lwt_io.input_channel * Lwt_io.output_channel
+    type closer = unit -> unit Lwt.t
+
+    type client = {
+        session : session ;
+        connection: connection;
+        closer : closer;
+      }
 
     type entry = {
         key:key;
@@ -607,7 +631,7 @@ module Kinetic = struct
     let () = header.cluster_version <- Some session.cluster_version in
     let () = header.connection_id <- Some session.connection_id in
     let () = header.sequence <- Some session.sequence in
-    (*let () = header.ack_sequence <- Some session.sequence in *)
+
     let () = command.header <- Some header in
 
     let body = default_command_body () in
@@ -629,6 +653,34 @@ module Kinetic = struct
     let proto_raw = Piqirun.to_string(gen_message m) in
     proto_raw
 
+  let make_pin_auth_serialized_msg session (pin:string) mt body_manip =
+
+    let open Session in
+    let command = default_command () in
+    let header = default_command_header () in
+    let () = header.cluster_version <- Some session.cluster_version in
+    let () = header.connection_id <- Some session.connection_id in
+    let () = header.sequence <- Some session.sequence in
+
+    let () = command.header <- Some header in
+
+    let body = default_command_body () in
+    let () = body_manip body in
+    let () = command.body <- Some body in
+    let m = default_message () in
+
+    let () = header.message_type <- Some mt in
+
+
+    let command_bytes = Piqirun.to_string(gen_command command) in
+    m.command_bytes <- Some command_bytes;
+
+    m.auth_type <- Some `pinauth;
+    let pin_auth = default_message_pinauth() in
+    let () = pin_auth.Message_pinauth.pin <- Some pin in
+    m.pin_auth <- Some pin_auth;
+    let proto_raw = Piqirun.to_string(gen_message m) in
+    proto_raw
 
   let set_attributes ~ko
                      ~db_version
@@ -676,7 +728,7 @@ module Kinetic = struct
     kv.synchronization <- sync;
     ()
 
-  let make_delete_forced session key =
+  let make_delete_forced client key =
     let mb = set_attributes ~ko:(Some key)
                             ~db_version:None
                             ~new_version:None
@@ -684,9 +736,9 @@ module Kinetic = struct
                             ~maybe_tag:None
                             ~synchronization:(Some WRITEBACK)
     in
-    make_serialized_msg session `delete mb
+    make_serialized_msg client.session `delete mb
 
-  let make_put session key value
+  let make_put client key value
                ~db_version ~new_version
                ~forced ~synchronization
                ~tag
@@ -700,7 +752,7 @@ module Kinetic = struct
         ~synchronization
         ~maybe_tag:tag
     in
-    make_serialized_msg session `put mb
+    make_serialized_msg client.session `put mb
 
   let _no_manip _ = ()
 
@@ -763,12 +815,14 @@ module Kinetic = struct
   let tracing (session:Session.t) t =
     session.Session.trace <- t
 
-  let _call (ic,oc) msg vo trace =
+  let _call client msg vo =
+    let ic,oc = client.connection in
+    let trace = client.session.Session.trace in
     network_send oc msg vo trace >>= fun () ->
     network_receive ic trace >>= fun (r,vo) ->
     Lwt.return (r,vo)
 
-  let put session conn k value
+  let put (client:client) k value
           ~db_version ~new_version
           ~forced
           ~synchronization
@@ -776,24 +830,24 @@ module Kinetic = struct
     =
     let msg =
       make_put
-        session k value
+        client k value
         ~db_version ~new_version
         ~forced ~synchronization
         ~tag
     in
-    _call conn msg (Some value) session.Session.trace >>= fun (r,vo) ->
+    _call client msg (Some value) >>= fun (r,vo) ->
     assert (vo = None);
     let command = _parse_command r in
-    let () = Session.incr_sequence session in
+    let () = Session.incr_sequence client.session in
     _assert_both command `put_response `success;
     Lwt.return ()
 
-  let delete_forced session conn k =
-    let msg = make_delete_forced session k in
-    _call conn msg None session.Session.trace >>= fun (r, vo) ->
+  let delete_forced (client:client) k =
+    let msg = make_delete_forced client k in
+    _call client msg None >>= fun (r, vo) ->
     assert (vo = None);
     let command = _parse_command r in
-    let () = Session.incr_sequence session in
+    let () = Session.incr_sequence client.session in
     _assert_type command `delete_response;
     _assert_success command;
     Lwt.return ()
@@ -810,11 +864,9 @@ module Kinetic = struct
     in
     make_serialized_msg session `get mb
 
-  let get session (ic,oc) k =
-    let msg = make_get session k in
-    let trace = session.Session.trace in
-    network_send oc msg None trace >>= fun () ->
-    network_receive ic trace >>= fun (r,vo) ->
+  let get client k =
+    let msg = make_get client.session k in
+    _call client msg None >>= fun (r,vo) ->
 
     let command = _parse_command r in
 
@@ -824,7 +876,7 @@ module Kinetic = struct
 
     let code = _get_status_code status in
     Lwt_log.info_f ~section "code=%i" (status_code2i code) >>= fun () ->
-    let () = Session.incr_sequence session in
+    let () = Session.incr_sequence client.session in
 
     match code with
     | `not_found ->
@@ -885,19 +937,19 @@ module Kinetic = struct
       keys
 
 
-  let get_key_range session conn
+  let get_key_range client
                     (start_key:string) sinc
                     (end_key:string) einc
                     (reverse_results:bool)
                     (max_results:int) =
-    let msg = make_get_key_range session start_key sinc
+    let msg = make_get_key_range client.session start_key sinc
                                  end_key einc reverse_results
                                  max_results
     in
-    _call conn msg None session.Session.trace >>= fun (r,vo) ->
+    _call client msg None >>= fun (r,vo) ->
     let command = _parse_command r in
     _assert_type command `getkeyrange_response;
-    Session.incr_sequence session;
+    Session.incr_sequence client.session;
     let status = _get_status command in
     let code = _get_status_code status in
     match code with
@@ -917,8 +969,10 @@ module Kinetic = struct
 
   let start_batch_operation
         ?(handler = default_handler)
-        session (ic,oc) =
+        client =
     let open Session in
+    let session = client.session in
+    let (ic,oc) = client.connection in
     let batch_id = session.batch_id in
     let () = session.batch_id <- Int32.succ batch_id in
     let msg = make_start_batch session batch_id in
@@ -940,7 +994,7 @@ module Kinetic = struct
     let open Batch in
     let msg = make_end_batch batch in
     Batch.add_handler batch `end_batch_response handler >>= fun () ->
-    let ic, oc = batch.conn in
+    let ic, oc = batch.connection in
     let session = batch.session in
     let trace = session.Session.trace in
     network_send oc msg None trace >>= fun () ->
@@ -955,7 +1009,7 @@ module Kinetic = struct
     assert (vo = None);
     let command = _parse_command flush_result in
     _assert_both command `flushalldata_response `success;
-    Lwt.return (success, batch.conn)
+    Lwt.return (success, batch.connection)
 
 
   let make_batch_msg session
@@ -1014,7 +1068,7 @@ module Kinetic = struct
                 entry
                 ~forced
     in
-    let (ic,oc) = batch.conn in
+    let (ic,oc) = batch.connection in
     let vo = map_option fst entry.vt in
     let session = batch.session in
     let trace = session.Session.trace in
@@ -1036,7 +1090,7 @@ module Kinetic = struct
                              entry
                              ~forced
     in
-    let (ic,oc) = batch.conn in
+    let (ic,oc) = batch.connection in
     let session = batch.session in
     let trace = session.Session.trace in
     network_send oc msg None trace >>= fun () ->
@@ -1085,15 +1139,95 @@ module Kinetic = struct
       make_serialized_msg session `peer2_peerpush manip
 
  *)
-    let noop session conn =
-      let msg = make_noop session in
+    let noop client =
+      let msg = make_noop client.session in
       let vo = None in
-      _call conn msg vo session.Session.trace >>= fun (r,vo) ->
+      _call client msg vo >>= fun (r,vo) ->
       assert (vo = None);
       let command = _parse_command r in
-      let () = Session.incr_sequence session in
+      let () = Session.incr_sequence client.session in
       _assert_both command `noop_response `success;
       Lwt.return ()
+
+    let make_instant_secure_erase session ~pin =
+
+      let manip body
+        =
+        let () =
+          set_attributes
+            ~ko:None
+            ~db_version:None
+            ~new_version:None
+            ~forced:None
+            ~synchronization:None
+            ~maybe_tag:None
+            body
+        in
+        let pinop = default_command_pin_operation  () in
+        let open Command_pin_operation in
+        let () = pinop.pin_op_type <- Some `secure_erase_pinop in
+        body.pin_op <- Some pinop
+      in
+      make_pin_auth_serialized_msg
+        session
+        pin `pinop manip
+
+    let instant_secure_erase ?pin client =
+      let pin = get_option "" pin in
+      let msg = make_instant_secure_erase client.session ~pin in
+      let vo = None in
+      _call client msg vo >>= fun(r,vo) ->
+      assert (vo = None);
+      let command = _parse_command r in
+      let () = Session.incr_sequence client.session in
+      _assert_both command `pinop_response `success;
+      Lwt.return_unit
+
+    let make_download_firmware session =
+      (*
+        14984113
+        authType: HMACAUTH
+        hmacAuth {
+          identity: 1
+          hmac: "\323\240\'\215\267\302\246>*\335A\33461\372x;o\177\364"
+        }
+        commandBytes: "\n\020\010\000\030\230\361\254\314\262\361\247\341\n \0008\026\022\004\032\002(\001"
+
+        header {
+          clusterVersion: 0
+          connectionID: 775357505907407000
+          sequence: 0
+          messageType: SETUP
+        }
+        body {
+          setup {
+            firmwareDownload: true
+          }
+        }
+
+       *)
+
+      let manip body =
+        let open Command_setup in
+        let setup = default_command_setup () in
+        setup.firmware_download <- Some true;
+        body.setup <- Some setup
+      in
+      make_serialized_msg
+        session `setup manip
+
+
+    let download_firmware client slod_data =
+      let msg = make_download_firmware client.session in
+      let vo = Some slod_data in
+      _call client msg vo >>= fun (r, vo) ->
+      assert (vo = None);
+      let command = _parse_command r in
+      let () = Session.incr_sequence client.session in
+      _assert_both command `setup_response `success;
+      Lwt.return_unit
+
+
 
 (*
 
@@ -1136,4 +1270,84 @@ module Kinetic = struct
          Lwt.fail (Failure sm)
 
  *)
+    let make_socket_address h p = Unix.ADDR_INET(Unix.inet_addr_of_string h, p)
+
+    let ssl_connect ctx ip port =
+      Lwt_log.debug_f "ssl_connect:(%s,%i)" ip port >>= fun () ->
+      let sa = Unix.ADDR_INET(Unix.inet_addr_of_string ip, port) in
+      let domain = Unix.domain_of_sockaddr sa in
+      let socket = Lwt_unix.socket domain Unix.SOCK_STREAM 0  in
+      Lwt_unix.connect socket sa >>= fun () ->
+      Lwt_log.debug_f "connected" >>= fun () ->
+
+      (*
+        Ssl.set_verify ctx
+          [Ssl.Verify_peer; Ssl.Verify_fail_if_no_peer_cert]
+           (Some Ssl.client_verify_callback);
+           Ssl.load_verify_locations ctx ca_cert "";
+       *)
+
+      Lwt_ssl.ssl_connect socket ctx >>= fun ssl_socket ->
+      Lwt_log.debug_f "ssl_connect ok" >>= fun () ->
+      Lwt.return ssl_socket
+
+
+    let wrap_connection ?trace ?secret ?cluster_version connection closer =
+      let secret =
+        match secret with
+        | None -> "asdfasdf"
+        | Some secret -> secret
+      in
+      let cluster_version =
+        match cluster_version with
+        | None -> 0L
+        | Some cluster_version -> cluster_version
+      in
+      handshake secret cluster_version ?trace connection
+      >>= fun session ->
+      Lwt.return {session ; connection; closer}
+
+    let make_client ?ctx ?secret ?cluster_version ?trace ~ip ~port =
+      let sa = make_socket_address ip port in
+      match ctx with
+      | None ->
+         Lwt_io.open_connection sa >>= fun connection ->
+         let closer () =
+           Lwt.catch
+             (fun () ->
+               let ic,oc = connection in
+               Lwt_io.close ic >>= fun () ->
+               Lwt_io.close oc >>= fun () ->
+               Lwt.return_unit
+             )
+             (fun exn -> Lwt_log.info ~exn "during close")
+         in
+         wrap_connection ?secret ?cluster_version ?trace connection closer
+
+      | Some ctx ->
+         ssl_connect ctx ip port >>= fun ssl_socket ->
+         let ic = Lwt_ssl.in_channel_of_descr ssl_socket
+         and oc = Lwt_ssl.out_channel_of_descr ssl_socket
+         in
+         Lwt_log.debug_f "have streams" >>= fun () ->
+         let connection = (ic,oc) in
+         let closer () =
+           Lwt.catch
+             (fun () -> Lwt_ssl.close ssl_socket)
+             (fun exn -> Lwt_log.info ~exn "during close ")
+         in
+         wrap_connection ?trace ?secret ?cluster_version connection closer
+
+    let dispose t = t.closer ()
+
+    let get_session t  = t.session
+
+
+
+    let with_client ?ctx ?secret ?cluster_version ?trace ~ip ~port  f =
+      make_client ?ctx ?secret ?cluster_version ?trace ~ip ~port
+      >>= fun client ->
+      Lwt.finalize
+        (fun () -> f client)
+        (fun () -> dispose client)
   end

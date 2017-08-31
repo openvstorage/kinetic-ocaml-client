@@ -3,6 +3,6 @@
 description = "Kinetic client"
 version = "0.0.6"
 exists_if = "kinetic.cmx,kinetic.cmi,kinetic.mli"
-requires = "threads lwt lwt.unix cryptokit"
+requires = "threads lwt lwt.unix cryptokit lwt_ssl"
 archive(byte) = "kinetic.client.cma"
 archive(native) = "kinetic.client.cmxa"
