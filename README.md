@@ -10,9 +10,11 @@ Installation
 ============
 In order to build the client, you need to have some OCaml libraries present.
 In concreto, you need:
-  - Lwt
+  - lwt
   - piqi
-  - Cryptokit
+  - cryptokit
+  - cmdliner
+  - lwt_ssl
 
 
 If you have these, you can compile everything with:
@@ -39,22 +41,16 @@ The API is defined in [kinetic.mli](src/kinetic.mli)
 typically you'd do something like:
 
 ```OCaml
-    let sa = make_socket_address "127.0.0.1" 8123 in
-    let secret = "...." in
-    let cluster_version = ... in
-    let session = Kinetic.make_session ....in
-    Lwt_io.with_connection sa
-        (fun conn ->
-         Kinetic.handshake secret cluster_version conn >>= fun session ->
-         ...
-         Kinetic.put session conn
+    Kinetic.with_client "127.0.0.1" 8123
+    (fun client ->
+         Kinetic.put client
              "the_key" (Some "the value")
              ~db_version:None ~new_version:None
              ~forced:true
              ~synchronization:(Some Kinetic.WRITEBACK)
-             >>= fun () ->
+         >>= fun () ->
          ...
-        )
+    ) >>= fun ... ->
 
 ```
 
