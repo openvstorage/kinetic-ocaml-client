@@ -366,8 +366,9 @@ module Config = struct
       add " max_oustranding_write_requests:%i;" t.max_outstanding_write_requests;
       add " max_message_size:%i;" t.max_message_size;
       (*
-add " max_key_range_count:%i;" t.max_operation_count_per_batch; *)
-      (* add " max_batch_count_per_device:%i;" t.max_batch_count_per_device; *)
+      add " max_key_range_count:%i;" t.max_operation_count_per_batch;
+      add " max_batch_count_per_device:%i;" t.max_batch_count_per_device;
+      *)
       add "}";
       Buffer.contents buffer
 end
