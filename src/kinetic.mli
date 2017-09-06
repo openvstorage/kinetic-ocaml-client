@@ -61,7 +61,7 @@ module Kinetic : sig
         vt : (value * tag )option;
       }
 
-    val entry_to_string: entry -> string
+    val show_entry: entry -> string
 
     type synchronization =
       | WRITETHROUGH

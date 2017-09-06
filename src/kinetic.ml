@@ -44,21 +44,32 @@ let get_option default = function
   | None -> default
   | Some x -> x
 
-let option2s x2s = function
+let show_option x2s = function
   | None -> "None"
   | Some x -> Printf.sprintf "Some %s" (x2s x)
 
-let so2s = option2s (fun x -> x)
-let bo2s = option2s (function | true -> "true" | false -> "false")
-let pair2s x2s y2s (x,y) = Printf.sprintf "(%s, %s)" (x2s x) (y2s y)
+let show_pair x2s y2s (x,y) = Printf.sprintf "(%s, %s)" (x2s x) (y2s y)
+
+
+let so2s   = show_option (fun x -> x)
+let so2hs  = show_option (fun x -> Printf.sprintf "0x%s" (to_hex x))
+let bo2s   = show_option (function | true -> "true" | false -> "false")
+let i64o2s = show_option Int64.to_string
+
 
 let trimmed x =
   let x', post =
-    if String.length x < 20
+    let len = String.length x in
+    if len < 20
     then x, "" else
-      (String.sub x 0 20), "..."
+      (String.sub x 0 20), Printf.sprintf "... (%i bytes)" len
   in
   Printf.sprintf "0x%S%s" (to_hex x')  post
+
+
+
+
+
 open Kinetic_piqi
 open Message
 open Command
@@ -155,6 +166,7 @@ let status_code2i = function
   | `connection_terminated   -> 20
   | `invalid_batch           -> 21 (* 3.0.6 *)
   | _ -> 42
+
 let _get_message_type (command:Command.t) =
   let header = unwrap_option "header" command.header in
   unwrap_option "message_type" header.message_type
@@ -204,7 +216,7 @@ let verify_cluster_version (header:Command_header.t) my_cluster_version =
 
   let cluster_version =
     unwrap_option
-      "header.connection_id"
+      "header.cluster_version"
       header.cluster_version
   in
   assert (my_cluster_version = cluster_version);
@@ -237,7 +249,7 @@ let network_receive ic trace =
   Lwt_io.read_into_exactly ic proto_raw 0 proto_ln >>= fun () ->
   begin
     if trace
-    then Lwt_log.debug_f
+    then Lwt_log.info_f
            ~section:tracing
            "received: %s" (to_hex proto_raw)
     else Lwt.return_unit
@@ -259,7 +271,7 @@ let network_send oc proto_raw vo trace =
     |None ->
       begin
         _encode_fixed32 prelude 5 0;
-        fun () -> Lwt.return ()
+        fun () -> Lwt.return_unit
       end
     |Some v ->
       begin
@@ -272,7 +284,7 @@ let network_send oc proto_raw vo trace =
     then
       Lwt_log.debug_f ~section:tracing "sending: %s\n" (to_hex proto_raw)
     else
-      Lwt.return ()
+      Lwt.return_unit
   end
     >>= fun () ->
   Lwt_io.write oc prelude >>= fun () ->
@@ -457,7 +469,7 @@ struct
                  (fun () ->h rc)
                  (fun exn -> go:= false;
                              success := false;
-                             Lwt.return ())
+                             Lwt.return_unit)
           end >>= fun ()->
           loop go ic
         end
@@ -479,7 +491,7 @@ struct
          Hashtbl.iter (fun k h ->
                        Lwt.ignore_result (h rc_bad);
                       ) handlers;
-         Lwt.return ()
+         Lwt.return_unit
         )
     in
     let () = Lwt.ignore_result t in
@@ -492,7 +504,7 @@ struct
     let typs = message_type2s typ in
     Lwt_log.debug_f ~section "add handler for: %s" typs >>= fun () ->
     Hashtbl.add t.handlers typ h;
-    Lwt.return ()
+    Lwt.return_unit
 
   let close t =
     Lwt_log.debug ~section "closing...." >>= fun () ->
@@ -531,7 +543,7 @@ module Kinetic = struct
       | Batch.Ok -> None
       | Batch.Nok(i,m) -> Some (i,m)
 
-    let tag2s = function
+    let show_tag = function
       | Invalid h -> Printf.sprintf "Invalid %s" (to_hex h)
       | Sha1 h -> Printf.sprintf "Sha1 %s" (to_hex h)
       | Crc32 h ->Printf.sprintf "Crc32 %lx" h
@@ -570,9 +582,8 @@ module Kinetic = struct
       =
       { key; db_version; new_version; vt }
 
-    let entry_to_string e =
-      let so2hs s = option2s (fun x -> Printf.sprintf "0x%s" (to_hex x)) s in
-      let vt2s = option2s (pair2s trimmed tag2s) in
+    let show_entry e =
+      let vt2s   = show_option (show_pair trimmed show_tag) in
       Printf.sprintf "{ key=%S; db_version=%s; new_version=%s; vo=%s }"
                e.key
                (so2hs e.db_version)
@@ -598,9 +609,9 @@ module Kinetic = struct
       Lwt_log.debug_f ~section "connection_id:%Li"
                       connection_id
       >>= fun () ->
-      Lwt_log.debug_f "sequence:%s" (option2s Int64.to_string header.sequence)
+      Lwt_log.debug_f "sequence:%s" (i64o2s header.sequence)
       >>= fun () ->
-      Lwt_log.debug_f "ack_sequence:%s" (option2s Int64.to_string header.sequence)
+      Lwt_log.debug_f "ack_sequence:%s" (i64o2s header.ack_sequence)
       >>= fun () ->
       let () = verify_cluster_version header cluster_version in
       let open Command_body in
@@ -899,7 +910,7 @@ module Kinetic = struct
     let command = _parse_command r in
     let () = Session.incr_sequence client.session in
     _assert_both command `put_response `success;
-    Lwt.return ()
+    Lwt.return_unit
 
   let delete_forced (client:client) k =
     let msg = make_delete_forced client k in
@@ -909,7 +920,7 @@ module Kinetic = struct
     let () = Session.incr_sequence client.session in
     _assert_type command `delete_response;
     _assert_success command;
-    Lwt.return ()
+    Lwt.return_unit
 
 
 
@@ -934,7 +945,7 @@ module Kinetic = struct
     let status = _get_status command in
 
     let code = _get_status_code status in
-    Lwt_log.info_f ~section "code=%i" (status_code2i code) >>= fun () ->
+    Lwt_log.debug_f ~section "code=%i" (status_code2i code) >>= fun () ->
     let () = Session.incr_sequence client.session in
 
     match code with
@@ -1118,7 +1129,7 @@ module Kinetic = struct
         (batch:Batch.t) entry
         ~forced
     =
-    Lwt_log.debug_f ~section "batch_put %s" (entry_to_string entry) >>= fun () ->
+    Lwt_log.debug_f ~section "batch_put %s" (show_entry entry) >>= fun () ->
     let open Batch in
     let msg = make_batch_msg
                 batch.session
@@ -1155,7 +1166,7 @@ module Kinetic = struct
     network_send oc msg None trace >>= fun () ->
     let () = Batch.inc_count batch in
     Session.incr_sequence session;
-    Lwt.return ()
+    Lwt.return_unit
 
 
   let make_noop session =
@@ -1206,7 +1217,7 @@ module Kinetic = struct
       let command = _parse_command r in
       let () = Session.incr_sequence client.session in
       _assert_both command `noop_response `success;
-      Lwt.return ()
+      Lwt.return_unit
 
     let make_instant_secure_erase session ~pin =
 
@@ -1304,7 +1315,7 @@ module Kinetic = struct
       let status = get_status_code r in
       let lwt_fail x = Lwt.fail(Failure x) in
       match status with
-      | `success -> Lwt.return ()
+      | `success -> Lwt.return_unit
       | `invalid_status_code
       | `not_attempted
       | `hmac_failure
