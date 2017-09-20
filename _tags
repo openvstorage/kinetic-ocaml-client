@@ -1,6 +1,10 @@
-true: debug, annot
+true: debug, annot, thread
+
 true: package(lwt)
-true: package(cryptokit)
+true: package(lwt_ssl)
 true: package(lwt.unix)
+true: package(cryptokit)
+true: package(cmdliner)
+
 "src":include
 "examples":include
