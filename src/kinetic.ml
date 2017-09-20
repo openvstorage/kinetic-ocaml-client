@@ -214,11 +214,7 @@ let verify_status (status:Command_status.t) =
 
 let verify_cluster_version (header:Command_header.t) my_cluster_version =
 
-  let cluster_version =
-    unwrap_option
-      "header.cluster_version"
-      header.cluster_version
-  in
+  let cluster_version = get_option 0L header.cluster_version in
   assert (my_cluster_version = cluster_version);
   ()
 
