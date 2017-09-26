@@ -255,7 +255,7 @@ let network_receive ic trace =
   maybe_read_value ic value_ln >>= fun vo ->
   let buf = Piqirun.init_from_string proto_raw in
   let m = parse_message buf in
-  Lwt.return (m,vo)
+  Lwt.return (m,vo, proto_raw)
 
 
 let network_send oc proto_raw vo trace =
@@ -435,10 +435,16 @@ struct
       then
         begin
           Lwt_log.debug ~section "waiting for msg" >>= fun () ->
-          network_receive ic session.Session.trace >>= fun (m,vo) ->
+          network_receive ic session.Session.trace >>= fun (m,vo, proto_raw) ->
           Lwt_log.debug ~section "got msg" >>= fun () ->
           let command = _parse_command m in
-          let typ = _get_message_type command in
+          let typ =
+            try _get_message_type command
+            with
+            | exn ->
+               let () = Lwt_log.ign_info_f "no type for: %s" (to_hex proto_raw) in
+               raise exn
+          in
           let typs = message_type2s typ in
           begin
             match find handlers typ with
@@ -594,7 +600,7 @@ module Kinetic = struct
     exception Kinetic_exc of (int * bytes) list
 
     let handshake secret cluster_version ?(trace = false) (ic,oc)  =
-      network_receive ic trace >>= fun (m,vo) ->
+      network_receive ic trace >>= fun (m,vo,_) ->
       let () = maybe_verify_msg m in
       let command = _parse_command m in
       let status = unwrap_option "command.status" command.status in
@@ -885,8 +891,17 @@ module Kinetic = struct
     let ic,oc = client.connection in
     let trace = client.session.Session.trace in
     network_send oc msg vo trace >>= fun () ->
-    network_receive ic trace >>= fun (r,vo) ->
-    Lwt.return (r,vo)
+    network_receive ic trace
+
+  let get_session t  = t.session
+
+  let _assert_value_size session value_size =
+    let cfg = get_config session in
+    let max_value_size = cfg.Config.max_value_size in
+    if value_size > max_value_size
+    then Lwt.fail_with (Printf.sprintf "value_size:%i > max_value_size:%i" value_size max_value_size)
+    else Lwt.return_unit
+
 
   let put (client:client) k value
           ~db_version ~new_version
@@ -894,6 +909,7 @@ module Kinetic = struct
           ~synchronization
           ~tag
     =
+    _assert_value_size client.session (Bytes.length value) >>= fun () ->
     let msg =
       make_put
         client k value
@@ -901,7 +917,7 @@ module Kinetic = struct
         ~forced ~synchronization
         ~tag
     in
-    _call client msg (Some value) >>= fun (r,vo) ->
+    _call client msg (Some value) >>= fun (r,vo,_) ->
     assert (vo = None);
     let command = _parse_command r in
     let () = Session.incr_sequence client.session in
@@ -910,7 +926,7 @@ module Kinetic = struct
 
   let delete_forced (client:client) k =
     let msg = make_delete_forced client k in
-    _call client msg None >>= fun (r, vo) ->
+    _call client msg None >>= fun (r, vo, _ ) ->
     assert (vo = None);
     let command = _parse_command r in
     let () = Session.incr_sequence client.session in
@@ -932,7 +948,7 @@ module Kinetic = struct
 
   let get client k =
     let msg = make_get client.session k in
-    _call client msg None >>= fun (r,vo) ->
+    _call client msg None >>= fun (r,vo, proto_raw) ->
 
     let command = _parse_command r in
 
@@ -943,7 +959,6 @@ module Kinetic = struct
     let code = _get_status_code status in
     Lwt_log.debug_f ~section "code=%i" (status_code2i code) >>= fun () ->
     let () = Session.incr_sequence client.session in
-
     match code with
     | `not_found ->
        Lwt_log.debug_f "`not_found" >>= fun () ->
@@ -951,16 +966,24 @@ module Kinetic = struct
     | `success    ->
        Lwt_log.debug_f "`success" >>= fun () ->
        begin
-         let version =
-           let body = unwrap_option "body" command.body in
-           let open Command_key_value in
-           let kv = unwrap_option "kv" body.key_value in
-           let db_version = kv.db_version in
-           db_version
-         in
-         let v = unwrap_option "value" vo in
-         let r = Some(v, version) in
-         Lwt.return r
+         Lwt.catch
+           (fun () ->
+             let version =
+               let body = unwrap_option "body" command.body in
+               let open Command_key_value in
+               let kv = unwrap_option "kv" body.key_value in
+               let db_version = kv.db_version in
+               db_version
+             in
+             let v = unwrap_option "value" vo in
+             let r = Some(v, version) in
+             Lwt.return r
+           )
+           (fun exn ->
+             Lwt_log.info_f ~exn "success, %S but still failing: %s" k (to_hex proto_raw)
+             >>= fun () ->
+             Lwt.fail exn
+           )
        end
     | x ->
        Lwt_log.info_f ~section "code=%i" (status_code2i x) >>= fun () ->
@@ -1012,7 +1035,7 @@ module Kinetic = struct
                                  end_key einc reverse_results
                                  max_results
     in
-    _call client msg None >>= fun (r,vo) ->
+    _call client msg None >>= fun (r,vo, _) ->
     let command = _parse_command r in
     _assert_type command `getkeyrange_response;
     Session.incr_sequence client.session;
@@ -1071,7 +1094,7 @@ module Kinetic = struct
     network_send oc flush None trace >>= fun () ->
     Batch.close batch >>= fun success ->
     Session.incr_sequence session;
-    network_receive ic trace >>= fun (flush_result, vo) ->
+    network_receive ic trace >>= fun (flush_result, vo, _ ) ->
     assert (vo = None);
     let command = _parse_command flush_result in
     _assert_both command `flushalldata_response `success;
@@ -1126,6 +1149,12 @@ module Kinetic = struct
         ~forced
     =
     Lwt_log.debug_f ~section "batch_put %s" (show_entry entry) >>= fun () ->
+    begin
+      match entry.vt with
+      | None -> Lwt.return_unit (* why would it be None ? *)
+      | Some (v,t) -> _assert_value_size batch.Batch.session (Bytes.length v)
+    end
+    >>= fun () ->
     let open Batch in
     let msg = make_batch_msg
                 batch.session
@@ -1208,7 +1237,7 @@ module Kinetic = struct
     let noop client =
       let msg = make_noop client.session in
       let vo = None in
-      _call client msg vo >>= fun (r,vo) ->
+      _call client msg vo >>= fun (r,vo, _) ->
       assert (vo = None);
       let command = _parse_command r in
       let () = Session.incr_sequence client.session in
@@ -1242,7 +1271,7 @@ module Kinetic = struct
       let pin = get_option "" pin in
       let msg = make_instant_secure_erase client.session ~pin in
       let vo = None in
-      _call client msg vo >>= fun(r,vo) ->
+      _call client msg vo >>= fun(r,vo, _) ->
       assert (vo = None);
       let command = _parse_command r in
       let () = Session.incr_sequence client.session in
@@ -1286,7 +1315,7 @@ module Kinetic = struct
     let download_firmware client slod_data =
       let msg = make_download_firmware client.session in
       let vo = Some slod_data in
-      _call client msg vo >>= fun (r, vo) ->
+      _call client msg vo >>= fun (r, vo,_) ->
       assert (vo = None);
       let command = _parse_command r in
       let () = Session.incr_sequence client.session in
@@ -1406,7 +1435,6 @@ module Kinetic = struct
 
     let dispose t = t.closer ()
 
-    let get_session t  = t.session
 
 
 
