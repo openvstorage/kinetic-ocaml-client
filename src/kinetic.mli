@@ -131,6 +131,10 @@ module Kinetic : sig
                        bool -> int ->
                        key list Lwt.t
 
+    (** returns capacity of the drive and portion full
+     *)
+    val get_capacities : client -> (int64 * float) Lwt.t
+
    (**
        Batches are atomic multi-updates.
        Remark:

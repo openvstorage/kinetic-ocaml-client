@@ -118,6 +118,8 @@ let message_type2s = function
   | `end_batch_response -> "end_batch_response"
   | `flushalldata -> "flushalldata"
   | `flushalldata_response -> "flushalldata_response"
+  | `getlog -> "getlog"
+  | `getlog_response -> "getlog"
   | _ -> "TODO: message type2s"
 
 let status_code2s = function
@@ -989,6 +991,46 @@ module Kinetic = struct
        Lwt_log.info_f ~section "code=%i" (status_code2i x) >>= fun () ->
        let sm = _get_status_message status in
        Lwt.fail (Failure sm)
+
+  type log_type =
+    | CAPACITIES
+
+  let translate_log_type = function
+    | CAPACITIES -> `capacities
+
+  let make_getlog session capacities =
+    let mb body =
+      let getlog = default_command_get_log () in
+      let open Command_get_log in
+      getlog.types <- List.map translate_log_type capacities;
+      body.get_log <- Some getlog
+    in
+    make_serialized_msg session `getlog mb
+
+  let get_capacities client =
+    let msg = make_getlog client.session [CAPACITIES] in
+    _call client msg None >>= fun (r,vo, proto_raw) ->
+    let command = _parse_command r in
+    _assert_type command `getlog_response;
+    let status = _get_status command in
+    let code = _get_status_code status in
+    let () = Session.incr_sequence client.session in
+    match code with
+    | `success ->
+       let body = unwrap_option "body" command.body in
+       let getlog = unwrap_option "getlog" body.get_log in
+       let open Command_get_log in
+       let capacity = unwrap_option "capacity" getlog.capacity in
+       let open Command_get_log_capacity in
+       let nominal = unwrap_option "nominal_capacity_in_bytes" capacity.nominal_capacity_in_bytes in
+       let portion_full = unwrap_option "portion_full" capacity.portion_full in
+       Lwt.return (nominal, portion_full)
+
+    | x ->
+       Lwt_log.info_f ~section "code=%i" (status_code2i x) >>= fun () ->
+       let sm = _get_status_message status in
+       Lwt.fail (Failure sm)
+
 
   let set_kr start_key sinc end_key einc reverse_results max_results body =
     let open Command_range in

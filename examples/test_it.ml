@@ -302,6 +302,14 @@ let range_test_reverse client =
   assert (List.length keys = 20);
   assert (List.hd keys= "x_00999");
   Lwt.return ()
+
+
+let get_capacities_test client =
+  Kinetic.get_capacities client >>= fun (cap, fill_rate) ->
+  Lwt_io.printlf "(%Li,%f)" cap fill_rate >>= fun () ->
+  Lwt.return_unit
+
+
 (*
 let peer2peer_test session conn =
   let peer = "192.168.11.102", 8000, false in
@@ -415,6 +423,7 @@ let run_tests ip port trace ssl filter =
         "batch_3_puts", batch_3_puts;
 
         "crc32", test_crc32;
+        "get_capacities", get_capacities_test;
         (* "put_no_tag", test_put_no_tag; *)
         (*"peer2peer", peer2peer_test;*)
       ]
