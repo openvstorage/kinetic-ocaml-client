@@ -64,7 +64,34 @@ let test_put_no_tag client =
     ~synchronization
   >>= fun () ->
   Lwt.return ()
+  
 
+let test_put_empty_string client =
+  let key = "test_put_empty_string" in
+  let value = "" in
+  let tag = Some (Kinetic.Crc32 0x0l) in
+  let synchronization = Some Kinetic.WRITEBACK in
+  Lwt_io.printlf "drive[%S] <- Some %S%!" key value >>= fun () ->
+  Kinetic.put
+    client
+    key value
+    ~db_version:None
+    ~new_version:None
+    ~forced:None
+    ~tag
+    ~synchronization
+  >>= fun () ->
+  Kinetic.get client key >>= fun vco ->
+  let () = match vco with
+    | None -> failwith "should have value"
+    | Some (v2, version) ->
+     begin
+       assert (v2 = value);
+       assert (version = Some "");
+     end
+  in
+  Lwt.return_unit
+  
 let test_noop client = Kinetic.noop client
 
 
@@ -413,6 +440,7 @@ let run_tests ip port trace ssl filter =
         "noop", test_noop;
         "put_get_delete", test_put_get_delete;
         "put_version", test_put_version;
+        "put_empty_string", test_put_empty_string;
         "put_largish", test_put_largish;
         "range_test", range_test;
         "range_test_reverse", range_test_reverse;

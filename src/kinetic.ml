@@ -968,24 +968,19 @@ module Kinetic = struct
     | `success    ->
        Lwt_log.debug_f "`success" >>= fun () ->
        begin
-         Lwt.catch
-           (fun () ->
-             let version =
-               let body = unwrap_option "body" command.body in
-               let open Command_key_value in
-               let kv = unwrap_option "kv" body.key_value in
-               let db_version = kv.db_version in
-               db_version
-             in
-             let v = unwrap_option "value" vo in
-             let r = Some(v, version) in
-             Lwt.return r
-           )
-           (fun exn ->
-             Lwt_log.info_f ~exn "success, %S but still failing: %s" k (to_hex proto_raw)
-             >>= fun () ->
-             Lwt.fail exn
-           )
+         let version =
+           let body = unwrap_option "body" command.body in
+           let open Command_key_value in
+           let kv = unwrap_option "kv" body.key_value in
+           let db_version = kv.db_version in
+           db_version
+         in
+         let v = match vo with
+           | None -> ""
+           | Some v -> v
+         in
+         let result = Some (v, version) in
+         Lwt.return result
        end
     | x ->
        Lwt_log.info_f ~section "code=%i" (status_code2i x) >>= fun () ->
