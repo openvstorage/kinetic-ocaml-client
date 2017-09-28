@@ -1131,15 +1131,8 @@ module Kinetic = struct
     network_send oc msg None trace >>= fun () ->
 
     let () = Session.incr_sequence session in
-    let flush = make_flush session in
-
-    network_send oc flush None trace >>= fun () ->
     Batch.close batch >>= fun success ->
     Session.incr_sequence session;
-    network_receive ic trace >>= fun (flush_result, vo, _ ) ->
-    assert (vo = None);
-    let command = _parse_command flush_result in
-    _assert_both command `flushalldata_response `success;
     Lwt.return (success, batch.connection)
 
 
