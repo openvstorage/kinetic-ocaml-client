@@ -122,6 +122,12 @@ let message_type2s = function
   | `getlog_response -> "getlog"
   | _ -> "TODO: message type2s"
 
+let auth_type2s = function
+   | `invalid_auth_type -> "invalid_auth_type"
+   | `hmacauth -> "hmacauth"
+   | `pinauth -> "pinauth"
+   | `unsolicitedstatus -> "unsolicitedstatus"
+
 let status_code2s = function
   | `invalid_status_code -> "invalid_status_code"
   | `not_attempted -> "not_attempted"
@@ -173,29 +179,40 @@ let _get_message_type (command:Command.t) =
   let header = unwrap_option "header" command.header in
   unwrap_option "message_type" header.message_type
 
-let _assert_both (command:Command.t) typ code =
-  let header = unwrap_option "header" command.header in
-  let htyp = unwrap_option "message type" header.message_type in
-  if htyp = typ
-  then
-    begin
-      let status = _get_status command in
-      let ccode = _get_status_code status in
-      if ccode = code
-      then ()
-      else
-        begin
-          let () = Printf.printf "ccode:%s\n%!" (status_code2s ccode) in
-          let sm = _get_status_message status in
-          failwith sm
-        end
-    end
-  else
-    failwith (
-      htyp |>
-        message_type2s |>
-        Printf.sprintf "unexpected type: %s"
-      )
+
+let _get_message_auth_type msg = unwrap_option "auth_type" msg.auth_type
+
+let _assert_both m command typ code =
+  let auth_type = _get_message_auth_type m in
+  match auth_type with
+  | `hmacauth ->
+     begin
+       let header = unwrap_option "header" command.header in
+       let htyp = unwrap_option "message type" header.message_type in
+       if htyp = typ
+       then
+         begin
+           let status = _get_status command in
+           let ccode = _get_status_code status in
+           if ccode = code
+           then ()
+           else
+             begin
+               let () = Printf.printf "ccode:%s\n%!" (status_code2s ccode) in
+               let sm = _get_status_message status in
+               failwith sm
+             end
+         end
+       else
+         failwith (
+             htyp |>
+               message_type2s |>
+               Printf.sprintf "unexpected type: %s"
+           )
+     end
+  | _ -> Printf.sprintf "unexpected auth_type %s" (auth_type2s auth_type) |> failwith
+
+
 
 
 let maybe_verify_msg (m:Message.t) =
@@ -439,42 +456,57 @@ struct
           Lwt_log.debug ~section "waiting for msg" >>= fun () ->
           network_receive ic session.Session.trace >>= fun (m,vo, proto_raw) ->
           Lwt_log.debug ~section "got msg" >>= fun () ->
+          let auth_type = _get_message_auth_type (m:Message.t) in
           let command = _parse_command m in
-          let typ =
-            try _get_message_type command
-            with
-            | exn ->
-               let () = Lwt_log.ign_info_f "no type for: %s" (to_hex proto_raw) in
-               raise exn
-          in
-          let typs = message_type2s typ in
           begin
-            match find handlers typ with
-            | None ->
-               Lwt_log.info_f ~section "\tignoring: %s" typs
-            | Some h ->
-               Lwt_log.debug_f ~section "found handler for: %s" typs
-               >>= fun () ->
-               let () = remove handlers typ in
-               let status = _get_status command in
-               let ccode = _get_status_code status in
-               let rc =
-                 match ccode with
-                 | `success -> Ok
-                 | _ ->
-                    let sm = _get_status_message status in
-                    let dsm = _get_detailed_status_message status in
-                    Lwt_log.ign_debug_f ~section
-                                        "dsm:%S" dsm;
-                    let (rci:int) = status_code2i ccode in
-                    Nok (rci, sm)
-               in
-               Lwt.catch
-                 (fun () ->h rc)
-                 (fun exn -> go:= false;
-                             success := false;
-                             Lwt.return_unit)
-          end >>= fun ()->
+            match auth_type with
+            | `hmacauth ->
+               begin
+                 let typ =
+                   try _get_message_type command
+                   with
+                   | exn ->
+                      let () = Lwt_log.ign_info_f "no type for: %s" (to_hex proto_raw) in
+                      raise exn
+                 in
+                 let typs = message_type2s typ in
+                 begin
+                   match find handlers typ with
+                   | None ->
+                      Lwt_log.info_f ~section "\tignoring: %s" typs
+                   | Some h ->
+                      Lwt_log.debug_f ~section "found handler for: %s" typs
+                      >>= fun () ->
+                      let () = remove handlers typ in
+                      let status = _get_status command in
+                      let ccode = _get_status_code status in
+                      let rc =
+                        match ccode with
+                        | `success -> Ok
+                        | _ ->
+                           let sm = _get_status_message status in
+                           let dsm = _get_detailed_status_message status in
+                           Lwt_log.ign_debug_f ~section
+                             "dsm:%S" dsm;
+                           let (rci:int) = status_code2i ccode in
+                           Nok (rci, sm)
+                      in
+                      Lwt.catch
+                        (fun () ->h rc)
+                        (fun exn -> go:= false;
+                                    success := false;
+                                    Lwt.return_unit)
+                 end
+               end
+            | `unsolicitedstatus ->
+               begin
+                 (* we could parse but do we care ? *)
+                 let () = Lwt_log.ign_info_f "unsolicitedstatus: %s" (to_hex proto_raw) in
+                 Lwt.return_unit
+               end
+            | `pinauth | `invalid_auth_type -> assert false
+          end
+          >>= fun ()->
           loop go ic
         end
       else
@@ -923,7 +955,7 @@ module Kinetic = struct
     assert (vo = None);
     let command = _parse_command r in
     let () = Session.incr_sequence client.session in
-    _assert_both command `put_response `success;
+    _assert_both r command `put_response `success;
     Lwt.return_unit
 
   let delete_forced (client:client) k =
@@ -1271,7 +1303,7 @@ module Kinetic = struct
       assert (vo = None);
       let command = _parse_command r in
       let () = Session.incr_sequence client.session in
-      _assert_both command `noop_response `success;
+      _assert_both r command `noop_response `success;
       Lwt.return_unit
 
     let make_instant_secure_erase session ~pin =
@@ -1305,7 +1337,7 @@ module Kinetic = struct
       assert (vo = None);
       let command = _parse_command r in
       let () = Session.incr_sequence client.session in
-      _assert_both command `pinop_response `success;
+      _assert_both r command `pinop_response `success;
       Lwt.return_unit
 
     let make_download_firmware session =
@@ -1349,7 +1381,7 @@ module Kinetic = struct
       assert (vo = None);
       let command = _parse_command r in
       let () = Session.incr_sequence client.session in
-      _assert_both command `setup_response `success;
+      _assert_both r command `setup_response `success;
       Lwt.return_unit
 
 
