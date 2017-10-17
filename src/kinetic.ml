@@ -119,7 +119,7 @@ let message_type2s = function
   | `flushalldata -> "flushalldata"
   | `flushalldata_response -> "flushalldata_response"
   | `getlog -> "getlog"
-  | `getlog_response -> "getlog"
+  | `getlog_response -> "getlog_response"
   | _ -> "TODO: message type2s"
 
 let auth_type2s = function
