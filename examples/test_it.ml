@@ -383,6 +383,16 @@ let run_with_client ip port trace ssl f =
   Lwt_log.add_rule "*" Lwt_log.Debug;
   Lwt_main.run t
 
+
+let get_info ip port trace ssl =
+  run_with_client ip port trace ssl
+    (fun client ->
+      Lwt_io.printlf "config:%s" (client |> Kinetic.get_session |> Kinetic.get_config |> Config.show)
+      >>= fun () ->
+      Lwt.return_unit
+    )
+
+
 let instant_secure_erase ip port trace =
 
   let f client =
@@ -537,6 +547,17 @@ module Cli = struct
       "download-firmware"
       ~doc:"flash new firmware on drive. Warranty void. You have been warned."
 
+  let get_info_cmd =
+    let open Term in
+    (pure get_info
+     $ ip
+     $ port 8443
+     $ trace
+     $ ssl
+    ),
+    info "get-info"
+      ~doc:"retrieve & dump some information about a drive"
+
   let default () =
     Printf.printf "an ocaml client for kinetic drives: tester & cli %!"
 
@@ -553,6 +574,7 @@ let () =
     [run_tests_cmd;
      instant_secure_erase_cmd;
      download_firmware_cmd;
+     get_info_cmd;
     ]
   in
 

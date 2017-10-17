@@ -331,6 +331,7 @@ module Config = struct
         serial_number: string;
         world_wide_name: string;
         version: string;
+        ipv4_addresses : string list;
         max_key_size: int;
         max_value_size: int;
         max_version_size: int;
@@ -347,6 +348,7 @@ module Config = struct
     let make ~vendor ~world_wide_name ~model
              ~serial_number
              ~version
+             ~ipv4_addresses
              ~max_key_size
              ~max_value_size
              ~max_version_size
@@ -364,6 +366,7 @@ module Config = struct
         serial_number;
         world_wide_name;
         version;
+        ipv4_addresses;
         max_key_size;
         max_value_size;
         max_version_size;
@@ -382,6 +385,7 @@ module Config = struct
       let add x = Printf.kprintf (fun s -> Buffer.add_string buffer s) x in
       add "Config {";
       add " version: %S;" t.version;
+      add " ipv4_addresses: [%s]" (String.concat ";" t.ipv4_addresses);
       add " wwn:%S;" t.world_wide_name;
       add " serial_number:%S;" t.serial_number;
       add " max_key_size:%i;" t.max_key_size;
@@ -663,6 +667,16 @@ module Kinetic = struct
       let () = verify_limits log in
       let cfg = unwrap_option "configuration" log.configuration in
       let wwn = unwrap_option "world_wide_name" cfg.world_wide_name in
+      let interfaces = cfg.interface in
+      let ipv4_addresses =
+        List.map
+          (fun interface ->
+            let open Command_get_log_configuration_interface in
+            let ip4bin = unwrap_option "ipv4_address" interface.ipv4_address in
+            ip4bin
+          )
+        interfaces
+      in
       let vendor = unwrap_option "vendor" cfg.vendor in
       let model = unwrap_option "model" cfg.model in
       let serial_number = unwrap_option
@@ -700,6 +714,7 @@ module Kinetic = struct
                     ~model
                     ~serial_number
                     ~version
+                    ~ipv4_addresses
                     ~max_key_size
                     ~max_value_size
                     ~max_version_size

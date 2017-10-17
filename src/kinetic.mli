@@ -5,6 +5,7 @@ module Config: sig
         serial_number: string;
         world_wide_name: string;
         version: string;
+        ipv4_addresses: string list;
         (* limits *)
         max_key_size:int;
         max_value_size: int;
