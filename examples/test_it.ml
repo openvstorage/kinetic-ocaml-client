@@ -64,7 +64,34 @@ let test_put_no_tag client =
     ~synchronization
   >>= fun () ->
   Lwt.return ()
+  
 
+let test_put_empty_string client =
+  let key = "test_put_empty_string" in
+  let value = "" in
+  let tag = Some (Kinetic.Crc32 0x0l) in
+  let synchronization = Some Kinetic.WRITEBACK in
+  Lwt_io.printlf "drive[%S] <- Some %S%!" key value >>= fun () ->
+  Kinetic.put
+    client
+    key value
+    ~db_version:None
+    ~new_version:None
+    ~forced:None
+    ~tag
+    ~synchronization
+  >>= fun () ->
+  Kinetic.get client key >>= fun vco ->
+  let () = match vco with
+    | None -> failwith "should have value"
+    | Some (v2, version) ->
+     begin
+       assert (v2 = value);
+       assert (version = Some "");
+     end
+  in
+  Lwt.return_unit
+  
 let test_noop client = Kinetic.noop client
 
 
@@ -302,6 +329,14 @@ let range_test_reverse client =
   assert (List.length keys = 20);
   assert (List.hd keys= "x_00999");
   Lwt.return ()
+
+
+let get_capacities_test client =
+  Kinetic.get_capacities client >>= fun (cap, fill_rate) ->
+  Lwt_io.printlf "(%Li,%f)" cap fill_rate >>= fun () ->
+  Lwt.return_unit
+
+
 (*
 let peer2peer_test session conn =
   let peer = "192.168.11.102", 8000, false in
@@ -347,6 +382,16 @@ let run_with_client ip port trace ssl f =
   in
   Lwt_log.add_rule "*" Lwt_log.Debug;
   Lwt_main.run t
+
+
+let get_info ip port trace ssl =
+  run_with_client ip port trace ssl
+    (fun client ->
+      Lwt_io.printlf "config:%s" (client |> Kinetic.get_session |> Kinetic.get_config |> Config.show)
+      >>= fun () ->
+      Lwt.return_unit
+    )
+
 
 let instant_secure_erase ip port trace =
 
@@ -405,6 +450,7 @@ let run_tests ip port trace ssl filter =
         "noop", test_noop;
         "put_get_delete", test_put_get_delete;
         "put_version", test_put_version;
+        "put_empty_string", test_put_empty_string;
         "put_largish", test_put_largish;
         "range_test", range_test;
         "range_test_reverse", range_test_reverse;
@@ -415,6 +461,7 @@ let run_tests ip port trace ssl filter =
         "batch_3_puts", batch_3_puts;
 
         "crc32", test_crc32;
+        "get_capacities", get_capacities_test;
         (* "put_no_tag", test_put_no_tag; *)
         (*"peer2peer", peer2peer_test;*)
       ]
@@ -500,6 +547,17 @@ module Cli = struct
       "download-firmware"
       ~doc:"flash new firmware on drive. Warranty void. You have been warned."
 
+  let get_info_cmd =
+    let open Term in
+    (pure get_info
+     $ ip
+     $ port 8443
+     $ trace
+     $ ssl
+    ),
+    info "get-info"
+      ~doc:"retrieve & dump some information about a drive"
+
   let default () =
     Printf.printf "an ocaml client for kinetic drives: tester & cli %!"
 
@@ -516,6 +574,7 @@ let () =
     [run_tests_cmd;
      instant_secure_erase_cmd;
      download_firmware_cmd;
+     get_info_cmd;
     ]
   in
 

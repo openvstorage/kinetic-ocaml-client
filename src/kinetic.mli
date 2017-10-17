@@ -5,6 +5,7 @@ module Config: sig
         serial_number: string;
         world_wide_name: string;
         version: string;
+        ipv4_addresses: string list;
         (* limits *)
         max_key_size:int;
         max_value_size: int;
@@ -130,6 +131,10 @@ module Kinetic : sig
                        key -> bool ->
                        bool -> int ->
                        key list Lwt.t
+
+    (** returns capacity of the drive and portion full
+     *)
+    val get_capacities : client -> (int64 * float) Lwt.t
 
    (**
        Batches are atomic multi-updates.

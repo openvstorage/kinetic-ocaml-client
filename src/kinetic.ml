@@ -118,7 +118,15 @@ let message_type2s = function
   | `end_batch_response -> "end_batch_response"
   | `flushalldata -> "flushalldata"
   | `flushalldata_response -> "flushalldata_response"
+  | `getlog -> "getlog"
+  | `getlog_response -> "getlog_response"
   | _ -> "TODO: message type2s"
+
+let auth_type2s = function
+   | `invalid_auth_type -> "invalid_auth_type"
+   | `hmacauth -> "hmacauth"
+   | `pinauth -> "pinauth"
+   | `unsolicitedstatus -> "unsolicitedstatus"
 
 let status_code2s = function
   | `invalid_status_code -> "invalid_status_code"
@@ -171,29 +179,40 @@ let _get_message_type (command:Command.t) =
   let header = unwrap_option "header" command.header in
   unwrap_option "message_type" header.message_type
 
-let _assert_both (command:Command.t) typ code =
-  let header = unwrap_option "header" command.header in
-  let htyp = unwrap_option "message type" header.message_type in
-  if htyp = typ
-  then
-    begin
-      let status = _get_status command in
-      let ccode = _get_status_code status in
-      if ccode = code
-      then ()
-      else
-        begin
-          let () = Printf.printf "ccode:%s\n%!" (status_code2s ccode) in
-          let sm = _get_status_message status in
-          failwith sm
-        end
-    end
-  else
-    failwith (
-      htyp |>
-        message_type2s |>
-        Printf.sprintf "unexpected type: %s"
-      )
+
+let _get_message_auth_type msg = unwrap_option "auth_type" msg.auth_type
+
+let _assert_both m command typ code =
+  let auth_type = _get_message_auth_type m in
+  match auth_type with
+  | `hmacauth ->
+     begin
+       let header = unwrap_option "header" command.header in
+       let htyp = unwrap_option "message type" header.message_type in
+       if htyp = typ
+       then
+         begin
+           let status = _get_status command in
+           let ccode = _get_status_code status in
+           if ccode = code
+           then ()
+           else
+             begin
+               let () = Printf.printf "ccode:%s\n%!" (status_code2s ccode) in
+               let sm = _get_status_message status in
+               failwith sm
+             end
+         end
+       else
+         failwith (
+             htyp |>
+               message_type2s |>
+               Printf.sprintf "unexpected type: %s"
+           )
+     end
+  | _ -> Printf.sprintf "unexpected auth_type %s" (auth_type2s auth_type) |> failwith
+
+
 
 
 let maybe_verify_msg (m:Message.t) =
@@ -255,7 +274,7 @@ let network_receive ic trace =
   maybe_read_value ic value_ln >>= fun vo ->
   let buf = Piqirun.init_from_string proto_raw in
   let m = parse_message buf in
-  Lwt.return (m,vo)
+  Lwt.return (m,vo, proto_raw)
 
 
 let network_send oc proto_raw vo trace =
@@ -312,6 +331,7 @@ module Config = struct
         serial_number: string;
         world_wide_name: string;
         version: string;
+        ipv4_addresses : string list;
         max_key_size: int;
         max_value_size: int;
         max_version_size: int;
@@ -328,6 +348,7 @@ module Config = struct
     let make ~vendor ~world_wide_name ~model
              ~serial_number
              ~version
+             ~ipv4_addresses
              ~max_key_size
              ~max_value_size
              ~max_version_size
@@ -345,6 +366,7 @@ module Config = struct
         serial_number;
         world_wide_name;
         version;
+        ipv4_addresses;
         max_key_size;
         max_value_size;
         max_version_size;
@@ -363,6 +385,7 @@ module Config = struct
       let add x = Printf.kprintf (fun s -> Buffer.add_string buffer s) x in
       add "Config {";
       add " version: %S;" t.version;
+      add " ipv4_addresses: [%s]" (String.concat ";" t.ipv4_addresses);
       add " wwn:%S;" t.world_wide_name;
       add " serial_number:%S;" t.serial_number;
       add " max_key_size:%i;" t.max_key_size;
@@ -435,38 +458,59 @@ struct
       then
         begin
           Lwt_log.debug ~section "waiting for msg" >>= fun () ->
-          network_receive ic session.Session.trace >>= fun (m,vo) ->
+          network_receive ic session.Session.trace >>= fun (m,vo, proto_raw) ->
           Lwt_log.debug ~section "got msg" >>= fun () ->
+          let auth_type = _get_message_auth_type (m:Message.t) in
           let command = _parse_command m in
-          let typ = _get_message_type command in
-          let typs = message_type2s typ in
           begin
-            match find handlers typ with
-            | None ->
-               Lwt_log.info_f ~section "\tignoring: %s" typs
-            | Some h ->
-               Lwt_log.debug_f ~section "found handler for: %s" typs
-               >>= fun () ->
-               let () = remove handlers typ in
-               let status = _get_status command in
-               let ccode = _get_status_code status in
-               let rc =
-                 match ccode with
-                 | `success -> Ok
-                 | _ ->
-                    let sm = _get_status_message status in
-                    let dsm = _get_detailed_status_message status in
-                    Lwt_log.ign_debug_f ~section
-                                        "dsm:%S" dsm;
-                    let (rci:int) = status_code2i ccode in
-                    Nok (rci, sm)
-               in
-               Lwt.catch
-                 (fun () ->h rc)
-                 (fun exn -> go:= false;
-                             success := false;
-                             Lwt.return_unit)
-          end >>= fun ()->
+            match auth_type with
+            | `hmacauth ->
+               begin
+                 let typ =
+                   try _get_message_type command
+                   with
+                   | exn ->
+                      let () = Lwt_log.ign_info_f "no type for: %s" (to_hex proto_raw) in
+                      raise exn
+                 in
+                 let typs = message_type2s typ in
+                 begin
+                   match find handlers typ with
+                   | None ->
+                      Lwt_log.info_f ~section "\tignoring: %s" typs
+                   | Some h ->
+                      Lwt_log.debug_f ~section "found handler for: %s" typs
+                      >>= fun () ->
+                      let () = remove handlers typ in
+                      let status = _get_status command in
+                      let ccode = _get_status_code status in
+                      let rc =
+                        match ccode with
+                        | `success -> Ok
+                        | _ ->
+                           let sm = _get_status_message status in
+                           let dsm = _get_detailed_status_message status in
+                           Lwt_log.ign_debug_f ~section
+                             "dsm:%S" dsm;
+                           let (rci:int) = status_code2i ccode in
+                           Nok (rci, sm)
+                      in
+                      Lwt.catch
+                        (fun () ->h rc)
+                        (fun exn -> go:= false;
+                                    success := false;
+                                    Lwt.return_unit)
+                 end
+               end
+            | `unsolicitedstatus ->
+               begin
+                 (* we could parse but do we care ? *)
+                 let () = Lwt_log.ign_info_f "unsolicitedstatus: %s" (to_hex proto_raw) in
+                 Lwt.return_unit
+               end
+            | `pinauth | `invalid_auth_type -> assert false
+          end
+          >>= fun ()->
           loop go ic
         end
       else
@@ -594,7 +638,7 @@ module Kinetic = struct
     exception Kinetic_exc of (int * bytes) list
 
     let handshake secret cluster_version ?(trace = false) (ic,oc)  =
-      network_receive ic trace >>= fun (m,vo) ->
+      network_receive ic trace >>= fun (m,vo,_) ->
       let () = maybe_verify_msg m in
       let command = _parse_command m in
       let status = unwrap_option "command.status" command.status in
@@ -623,6 +667,16 @@ module Kinetic = struct
       let () = verify_limits log in
       let cfg = unwrap_option "configuration" log.configuration in
       let wwn = unwrap_option "world_wide_name" cfg.world_wide_name in
+      let interfaces = cfg.interface in
+      let ipv4_addresses =
+        List.map
+          (fun interface ->
+            let open Command_get_log_configuration_interface in
+            let ip4bin = unwrap_option "ipv4_address" interface.ipv4_address in
+            ip4bin
+          )
+        interfaces
+      in
       let vendor = unwrap_option "vendor" cfg.vendor in
       let model = unwrap_option "model" cfg.model in
       let serial_number = unwrap_option
@@ -660,6 +714,7 @@ module Kinetic = struct
                     ~model
                     ~serial_number
                     ~version
+                    ~ipv4_addresses
                     ~max_key_size
                     ~max_value_size
                     ~max_version_size
@@ -885,8 +940,17 @@ module Kinetic = struct
     let ic,oc = client.connection in
     let trace = client.session.Session.trace in
     network_send oc msg vo trace >>= fun () ->
-    network_receive ic trace >>= fun (r,vo) ->
-    Lwt.return (r,vo)
+    network_receive ic trace
+
+  let get_session t  = t.session
+
+  let _assert_value_size session value_size =
+    let cfg = get_config session in
+    let max_value_size = cfg.Config.max_value_size in
+    if value_size > max_value_size
+    then Lwt.fail_with (Printf.sprintf "value_size:%i > max_value_size:%i" value_size max_value_size)
+    else Lwt.return_unit
+
 
   let put (client:client) k value
           ~db_version ~new_version
@@ -894,6 +958,7 @@ module Kinetic = struct
           ~synchronization
           ~tag
     =
+    _assert_value_size client.session (Bytes.length value) >>= fun () ->
     let msg =
       make_put
         client k value
@@ -901,16 +966,16 @@ module Kinetic = struct
         ~forced ~synchronization
         ~tag
     in
-    _call client msg (Some value) >>= fun (r,vo) ->
+    _call client msg (Some value) >>= fun (r,vo,_) ->
     assert (vo = None);
     let command = _parse_command r in
     let () = Session.incr_sequence client.session in
-    _assert_both command `put_response `success;
+    _assert_both r command `put_response `success;
     Lwt.return_unit
 
   let delete_forced (client:client) k =
     let msg = make_delete_forced client k in
-    _call client msg None >>= fun (r, vo) ->
+    _call client msg None >>= fun (r, vo, _ ) ->
     assert (vo = None);
     let command = _parse_command r in
     let () = Session.incr_sequence client.session in
@@ -932,7 +997,7 @@ module Kinetic = struct
 
   let get client k =
     let msg = make_get client.session k in
-    _call client msg None >>= fun (r,vo) ->
+    _call client msg None >>= fun (r,vo, proto_raw) ->
 
     let command = _parse_command r in
 
@@ -943,7 +1008,6 @@ module Kinetic = struct
     let code = _get_status_code status in
     Lwt_log.debug_f ~section "code=%i" (status_code2i code) >>= fun () ->
     let () = Session.incr_sequence client.session in
-
     match code with
     | `not_found ->
        Lwt_log.debug_f "`not_found" >>= fun () ->
@@ -958,14 +1022,57 @@ module Kinetic = struct
            let db_version = kv.db_version in
            db_version
          in
-         let v = unwrap_option "value" vo in
-         let r = Some(v, version) in
-         Lwt.return r
+         let v = match vo with
+           | None -> ""
+           | Some v -> v
+         in
+         let result = Some (v, version) in
+         Lwt.return result
        end
     | x ->
        Lwt_log.info_f ~section "code=%i" (status_code2i x) >>= fun () ->
        let sm = _get_status_message status in
        Lwt.fail (Failure sm)
+
+  type log_type =
+    | CAPACITIES
+
+  let translate_log_type = function
+    | CAPACITIES -> `capacities
+
+  let make_getlog session capacities =
+    let mb body =
+      let getlog = default_command_get_log () in
+      let open Command_get_log in
+      getlog.types <- List.map translate_log_type capacities;
+      body.get_log <- Some getlog
+    in
+    make_serialized_msg session `getlog mb
+
+  let get_capacities client =
+    let msg = make_getlog client.session [CAPACITIES] in
+    _call client msg None >>= fun (r,vo, proto_raw) ->
+    let command = _parse_command r in
+    _assert_type command `getlog_response;
+    let status = _get_status command in
+    let code = _get_status_code status in
+    let () = Session.incr_sequence client.session in
+    match code with
+    | `success ->
+       let body = unwrap_option "body" command.body in
+       let getlog = unwrap_option "getlog" body.get_log in
+       let open Command_get_log in
+       let capacity = unwrap_option "capacity" getlog.capacity in
+       let open Command_get_log_capacity in
+       let nominal = unwrap_option "nominal_capacity_in_bytes" capacity.nominal_capacity_in_bytes in
+       let portion_full = unwrap_option "portion_full" capacity.portion_full in
+       Lwt.return (nominal, portion_full)
+
+    | x ->
+       Lwt_log.info_f ~section "code=%i" (status_code2i x) >>= fun () ->
+       let sm = _get_status_message status in
+       Lwt.fail (Failure sm)
+
 
   let set_kr start_key sinc end_key einc reverse_results max_results body =
     let open Command_range in
@@ -1012,7 +1119,7 @@ module Kinetic = struct
                                  end_key einc reverse_results
                                  max_results
     in
-    _call client msg None >>= fun (r,vo) ->
+    _call client msg None >>= fun (r,vo, _) ->
     let command = _parse_command r in
     _assert_type command `getkeyrange_response;
     Session.incr_sequence client.session;
@@ -1066,15 +1173,8 @@ module Kinetic = struct
     network_send oc msg None trace >>= fun () ->
 
     let () = Session.incr_sequence session in
-    let flush = make_flush session in
-
-    network_send oc flush None trace >>= fun () ->
     Batch.close batch >>= fun success ->
     Session.incr_sequence session;
-    network_receive ic trace >>= fun (flush_result, vo) ->
-    assert (vo = None);
-    let command = _parse_command flush_result in
-    _assert_both command `flushalldata_response `success;
     Lwt.return (success, batch.connection)
 
 
@@ -1126,6 +1226,12 @@ module Kinetic = struct
         ~forced
     =
     Lwt_log.debug_f ~section "batch_put %s" (show_entry entry) >>= fun () ->
+    begin
+      match entry.vt with
+      | None -> Lwt.return_unit (* why would it be None ? *)
+      | Some (v,t) -> _assert_value_size batch.Batch.session (Bytes.length v)
+    end
+    >>= fun () ->
     let open Batch in
     let msg = make_batch_msg
                 batch.session
@@ -1208,11 +1314,11 @@ module Kinetic = struct
     let noop client =
       let msg = make_noop client.session in
       let vo = None in
-      _call client msg vo >>= fun (r,vo) ->
+      _call client msg vo >>= fun (r,vo, _) ->
       assert (vo = None);
       let command = _parse_command r in
       let () = Session.incr_sequence client.session in
-      _assert_both command `noop_response `success;
+      _assert_both r command `noop_response `success;
       Lwt.return_unit
 
     let make_instant_secure_erase session ~pin =
@@ -1242,11 +1348,11 @@ module Kinetic = struct
       let pin = get_option "" pin in
       let msg = make_instant_secure_erase client.session ~pin in
       let vo = None in
-      _call client msg vo >>= fun(r,vo) ->
+      _call client msg vo >>= fun(r,vo, _) ->
       assert (vo = None);
       let command = _parse_command r in
       let () = Session.incr_sequence client.session in
-      _assert_both command `pinop_response `success;
+      _assert_both r command `pinop_response `success;
       Lwt.return_unit
 
     let make_download_firmware session =
@@ -1286,11 +1392,11 @@ module Kinetic = struct
     let download_firmware client slod_data =
       let msg = make_download_firmware client.session in
       let vo = Some slod_data in
-      _call client msg vo >>= fun (r, vo) ->
+      _call client msg vo >>= fun (r, vo,_) ->
       assert (vo = None);
       let command = _parse_command r in
       let () = Session.incr_sequence client.session in
-      _assert_both command `setup_response `success;
+      _assert_both r command `setup_response `success;
       Lwt.return_unit
 
 
@@ -1406,7 +1512,6 @@ module Kinetic = struct
 
     let dispose t = t.closer ()
 
-    let get_session t  = t.session
 
 
 
