@@ -669,13 +669,16 @@ module Kinetic = struct
       let wwn = unwrap_option "world_wide_name" cfg.world_wide_name in
       let interfaces = cfg.interface in
       let ipv4_addresses =
-        List.map
-          (fun interface ->
+        List.fold_left
+          (fun acc interface ->
             let open Command_get_log_configuration_interface in
             let ip4bin = unwrap_option "ipv4_address" interface.ipv4_address in
-            ip4bin
-          )
-        interfaces
+            if ip4bin = "" (* this nic has no connection, skip it *)
+            then acc
+            else ip4bin :: acc
+          ) []
+          interfaces
+        |> List.rev
       in
       let vendor = unwrap_option "vendor" cfg.vendor in
       let model = unwrap_option "model" cfg.model in
