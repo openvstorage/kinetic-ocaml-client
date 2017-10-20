@@ -1,9 +1,7 @@
 Kinetic OCaml Client
 ====================
 This is an OCaml client for [Seagate's Kinetic drives](https://developers.seagate.com/display/KV/Kinetic+Open+Storage+Documentation+Wiki).
-Currently, it uses protocol version 3.0.6.
-This is corresponds with version 0.8.0.4 of the Java Simulator or
-Kinetic drive firmware version 3.0.1
+Currently, it uses protocol version 3.1.0.
 
 
 Installation
@@ -41,7 +39,7 @@ The API is defined in [kinetic.mli](src/kinetic.mli)
 typically you'd do something like:
 
 ```OCaml
-    Kinetic.with_client "127.0.0.1" 8123
+    Kinetic.with_client ~ip:"127.0.0.1" ~port:8123
     (fun client ->
          Kinetic.put client
              "the_key" (Some "the value")
@@ -53,6 +51,8 @@ typically you'd do something like:
     ) >>= fun ... ->
 
 ```
+
+take a look at [test_it.ml](examples/test_it.ml)
 
 Remarks
 =======
