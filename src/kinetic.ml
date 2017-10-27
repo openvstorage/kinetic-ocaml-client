@@ -241,16 +241,33 @@ let verify_limits log = ()
 
 open Lwt
 
-let maybe_read_value ic value_ln =
+let read_exact socket buf off len =
+  let rec loop off = function
+    | 0   -> Lwt.return_unit
+    | len -> Lwt_ssl.read socket buf off len >>= fun bytes_read ->
+             loop (off + bytes_read) (len - bytes_read)
+  in
+  loop off len
+
+let write_exact socket buf off len =
+  let rec loop off = function
+    | 0   -> Lwt.return_unit
+    | len -> Lwt_ssl.write socket buf off len >>= fun bytes_written ->
+             loop (off + bytes_written) (len - bytes_written)
+  in
+  loop off len
+
+let maybe_read_value socket value_ln =
   match value_ln with
   | 0 -> Lwt.return None
   | n -> let vb = Bytes.create value_ln in
-         Lwt_io.read_into_exactly ic vb 0 value_ln >>= fun () ->
+         read_exact socket vb 0 value_ln >>= fun () ->
          Lwt.return (Some vb)
 
-let network_receive ic trace =
+         
+let network_receive socket trace =
   let msg_bytes = Bytes.create 9 in
-  Lwt_io.read_into_exactly ic msg_bytes 0 9 >>= fun () ->
+  read_exact socket msg_bytes 0 9 >>= fun () ->
   let magic = msg_bytes.[0] in
   let proto_ln = _decode_fixed32 msg_bytes 1 in
   let value_ln = _decode_fixed32 msg_bytes 5 in
@@ -261,7 +278,7 @@ let network_receive ic trace =
    *)
   assert (magic = 'F');
   let proto_raw = Bytes.create proto_ln in
-  Lwt_io.read_into_exactly ic proto_raw 0 proto_ln >>= fun () ->
+  read_exact socket proto_raw 0 proto_ln >>= fun () ->
   begin
     if trace
     then Lwt_log.info_f
@@ -271,17 +288,18 @@ let network_receive ic trace =
   end
   >>= fun () ->
 
-  maybe_read_value ic value_ln >>= fun vo ->
+  maybe_read_value socket value_ln >>= fun vo ->
   let buf = Piqirun.init_from_string proto_raw in
   let m = parse_message buf in
   Lwt.return (m,vo, proto_raw)
 
 
-let network_send oc proto_raw vo trace =
-  let prelude = Bytes.create 9 in
+let network_send socket proto_raw vo trace =
+  let prelude_len = 9 in
+  let prelude = Bytes.create prelude_len in
   Bytes.set prelude 0 'F';
-
-  _encode_fixed32 prelude 1 (String.length proto_raw);
+  let proto_raw_len = Bytes.length proto_raw in
+  _encode_fixed32 prelude 1 proto_raw_len;
   let write_vo = match vo with
     |None ->
       begin
@@ -290,8 +308,9 @@ let network_send oc proto_raw vo trace =
       end
     |Some v ->
       begin
-        _encode_fixed32 prelude 5 (Bytes.length v);
-        fun () -> Lwt_io.write oc v
+        let v_len = Bytes.length v in
+        _encode_fixed32 prelude 5 v_len;
+        fun () -> write_exact socket v 0 v_len 
       end
   in
   begin
@@ -302,8 +321,8 @@ let network_send oc proto_raw vo trace =
       Lwt.return_unit
   end
     >>= fun () ->
-  Lwt_io.write oc prelude >>= fun () ->
-  Lwt_io.write oc proto_raw >>= fun ()->
+  write_exact socket prelude   0 prelude_len   >>= fun () ->
+  write_exact socket proto_raw 0 proto_raw_len >>= fun ()->
   write_vo ()
 
 let _parse_command (m:Message.t) =
@@ -433,7 +452,7 @@ struct
   type t = { mvar :  bool Lwt_mvar.t;
              handlers : (command_message_type,
                          rc -> unit Lwt.t) Hashtbl.t;
-             connection : Lwt_io.input_channel * Lwt_io.output_channel;
+             connection : Lwt_ssl.socket;
              batch_id : int32;
              go : bool ref;
              session : Session.t;
@@ -448,17 +467,17 @@ struct
   let remove t h = Hashtbl.remove t h
 
   let make session connection batch_id =
-    let ic,oc = connection in
+    let socket = connection in
     let handlers = Hashtbl.create 5 in
     let mvar = Lwt_mvar.create_empty () in
     let success = ref true in
-    let rec loop (go:bool ref) (ic:Lwt_io.input_channel) =
+    let rec loop (go:bool ref) (socket:Lwt_ssl.socket) =
       let size = Hashtbl.length handlers in
       if size > 0 || !go
       then
         begin
           Lwt_log.debug ~section "waiting for msg" >>= fun () ->
-          network_receive ic session.Session.trace >>= fun (m,vo, proto_raw) ->
+          network_receive socket session.Session.trace >>= fun (m,vo, proto_raw) ->
           Lwt_log.debug ~section "got msg" >>= fun () ->
           let auth_type = _get_message_auth_type (m:Message.t) in
           let command = _parse_command m in
@@ -511,7 +530,7 @@ struct
             | `pinauth | `invalid_auth_type -> assert false
           end
           >>= fun ()->
-          loop go ic
+          loop go socket
         end
       else
         begin
@@ -522,7 +541,7 @@ struct
     let go = ref true in
     let t =
       Lwt.catch
-        (fun () ->loop go ic )
+        (fun () ->loop go socket )
         (fun exn ->
          Lwt_log.debug_f ~exn ~section "batch loop for %li failed" batch_id
          >>= fun ()->
@@ -594,7 +613,7 @@ module Kinetic = struct
     type value = bytes
     type version = bytes option
 
-    type connection = Lwt_io.input_channel * Lwt_io.output_channel
+    type connection = Lwt_ssl.socket
     type closer = unit -> unit Lwt.t
 
     type client = {
@@ -637,8 +656,8 @@ module Kinetic = struct
 
     exception Kinetic_exc of (int * bytes) list
 
-    let handshake secret cluster_version ?(trace = false) (ic,oc)  =
-      network_receive ic trace >>= fun (m,vo,_) ->
+    let handshake secret cluster_version ?(trace = false) socket  =
+      network_receive socket trace >>= fun (m,vo,_) ->
       let () = maybe_verify_msg m in
       let command = _parse_command m in
       let status = unwrap_option "command.status" command.status in
@@ -940,10 +959,10 @@ module Kinetic = struct
     session.Session.trace <- t
 
   let _call client msg vo =
-    let ic,oc = client.connection in
+    let socket = client.connection in
     let trace = client.session.Session.trace in
-    network_send oc msg vo trace >>= fun () ->
-    network_receive ic trace
+    network_send socket msg vo trace >>= fun () ->
+    network_receive socket trace
 
   let get_session t  = t.session
 
@@ -1148,12 +1167,12 @@ module Kinetic = struct
         client =
     let open Session in
     let session = client.session in
-    let (ic,oc) = client.connection in
+    let socket = client.connection in
     let batch_id = session.batch_id in
     let () = session.batch_id <- Int32.succ batch_id in
     let msg = make_start_batch session batch_id in
-    network_send oc msg None session.Session.trace >>= fun () ->
-    let batch = Batch.make session (ic,oc) batch_id in
+    network_send socket msg None session.Session.trace >>= fun () ->
+    let batch = Batch.make session socket batch_id in
     Batch.add_handler
       batch
       `start_batch_response
@@ -1170,10 +1189,10 @@ module Kinetic = struct
     let open Batch in
     let msg = make_end_batch batch in
     Batch.add_handler batch `end_batch_response handler >>= fun () ->
-    let ic, oc = batch.connection in
+    let socket = batch.connection in
     let session = batch.session in
     let trace = session.Session.trace in
-    network_send oc msg None trace >>= fun () ->
+    network_send socket msg None trace >>= fun () ->
 
     let () = Session.incr_sequence session in
     Batch.close batch >>= fun success ->
@@ -1243,11 +1262,11 @@ module Kinetic = struct
                 entry
                 ~forced
     in
-    let (ic,oc) = batch.connection in
+    let socket = batch.connection in
     let vo = map_option fst entry.vt in
     let session = batch.session in
     let trace = session.Session.trace in
-    network_send oc msg vo trace >>= fun () ->
+    network_send socket msg vo trace >>= fun () ->
     let () = Batch.inc_count batch in
     Session.incr_sequence session;
     Lwt.return_unit
@@ -1265,10 +1284,10 @@ module Kinetic = struct
                              entry
                              ~forced
     in
-    let (ic,oc) = batch.connection in
+    let socket = batch.connection in
     let session = batch.session in
     let trace = session.Session.trace in
-    network_send oc msg None trace >>= fun () ->
+    network_send socket msg None trace >>= fun () ->
     let () = Batch.inc_count batch in
     Session.incr_sequence session;
     Lwt.return_unit
@@ -1484,34 +1503,27 @@ module Kinetic = struct
 
     let make_client ?ctx ?secret ?cluster_version ?trace ~ip ~port =
       let sa = make_socket_address ip port in
+      let domain = Unix.domain_of_sockaddr sa in
       match ctx with
       | None ->
-         Lwt_io.open_connection sa >>= fun connection ->
+         let socket = Lwt_unix.socket domain Unix.SOCK_STREAM 0 in
+         Lwt_unix.connect socket sa >>= fun () ->
          let closer () =
            Lwt.catch
-             (fun () ->
-               let ic,oc = connection in
-               Lwt_io.close ic >>= fun () ->
-               Lwt_io.close oc >>= fun () ->
-               Lwt.return_unit
-             )
+             (fun () -> Lwt_unix.close socket )
              (fun exn -> Lwt_log.info ~exn "during close")
          in
-         wrap_connection ?secret ?cluster_version ?trace connection closer
+         let ssl_socket = Lwt_ssl.plain socket in
+         wrap_connection ?secret ?cluster_version ?trace ssl_socket closer
 
       | Some ctx ->
          ssl_connect ctx ip port >>= fun ssl_socket ->
-         let ic = Lwt_ssl.in_channel_of_descr ssl_socket
-         and oc = Lwt_ssl.out_channel_of_descr ssl_socket
-         in
-         Lwt_log.debug_f "have streams" >>= fun () ->
-         let connection = (ic,oc) in
          let closer () =
            Lwt.catch
              (fun () -> Lwt_ssl.close ssl_socket)
              (fun exn -> Lwt_log.info ~exn "during close ")
          in
-         wrap_connection ?trace ?secret ?cluster_version connection closer
+         wrap_connection ?trace ?secret ?cluster_version ssl_socket closer
 
     let dispose t = t.closer ()
 

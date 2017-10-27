@@ -40,7 +40,7 @@ module Kinetic : sig
     type batch
     val get_batch_id : batch -> int32
 
-    type connection = Lwt_io.input_channel * Lwt_io.output_channel
+    type connection
 
     type client
 
