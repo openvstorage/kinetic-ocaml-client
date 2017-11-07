@@ -185,7 +185,7 @@ let _get_message_auth_type msg = unwrap_option "auth_type" msg.auth_type
 let _assert_both m command typ code =
   let auth_type = _get_message_auth_type m in
   match auth_type with
-  | `hmacauth ->
+  | `hmacauth | `pinauth ->
      begin
        let header = unwrap_option "header" command.header in
        let htyp = unwrap_option "message type" header.message_type in
