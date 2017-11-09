@@ -53,6 +53,7 @@ module type INTEGRATION = sig
   type socket 
   val create : int -> value
   val show : value -> string
+  val show_socket : socket -> string
 
   (*  the value type can be chosen by the integrator ... *)
 
@@ -73,6 +74,7 @@ module BytesIntegration : sig
   type socket = Lwt_ssl.socket
   val create : int -> value
   val show : value -> string
+  val show_socket : socket -> string
   val read  : socket -> value -> off -> len -> int Lwt.t
   val write : socket -> value -> off -> len -> int Lwt.t
 

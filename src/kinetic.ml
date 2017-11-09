@@ -263,7 +263,7 @@ let maybe_read_generic create read_f socket v_len =
            
 let network_receive_generic
       create
-      read_v read_bytes socket
+      read_v read_bytes socket show_socket
       trace
   =
   let msg_bytes = Bytes.create 9 in
@@ -283,7 +283,9 @@ let network_receive_generic
     if trace
     then Lwt_log.info_f
            ~section:tracing
-           "received: %s" (to_hex proto_raw)
+           "(socket:%s) received: %s"
+           (show_socket socket)
+           (to_hex proto_raw)
     else Lwt.return_unit
   end
   >>= fun () ->
@@ -467,6 +469,7 @@ module type INTEGRATION = sig
   type socket
   val create : int -> value
   val show : value -> string
+  val show_socket : socket -> string
   val read  : socket -> value -> off -> len -> int Lwt.t
   val write : socket -> value -> off -> len -> int Lwt.t
 
@@ -480,6 +483,11 @@ end
 module BytesIntegration = struct
   type value = Bytes.t
   type socket = Lwt_ssl.socket
+  let show_socket socket =
+    let fd = Lwt_ssl.get_unix_fd socket in
+    let (fdi:int) = Obj.magic fd in
+    string_of_int fdi
+
   let create = Bytes.create
   let show = trimmed
 
@@ -532,7 +540,7 @@ struct
         begin
           Lwt_log.debug ~section "waiting for msg" >>= fun () ->
           network_receive_generic
-            I.create I.read I.read_bytes socket session.Session.trace
+            I.create I.read I.read_bytes socket I.show_socket session.Session.trace
           >>= fun (m,vo, proto_raw) ->
           Lwt_log.debug ~section "got msg" >>= fun () ->
           let auth_type = _get_message_auth_type (m:Message.t) in
@@ -705,7 +713,7 @@ module Make(I:INTEGRATION) = struct
     exception Kinetic_exc of (int * bytes) list
 
     let handshake secret cluster_version ?(trace = false) socket  =
-      network_receive_generic I.create I.read I.read_bytes socket trace >>= fun (m,vo,_) ->
+      network_receive_generic I.create I.read I.read_bytes socket I.show_socket trace >>= fun (m,vo,_) ->
       let () = maybe_verify_msg m in
       let command = _parse_command m in
       let status = unwrap_option "command.status" command.status in
@@ -1010,7 +1018,7 @@ module Make(I:INTEGRATION) = struct
     let socket = client.socket in
     let trace = client.session.Session.trace in
     network_send_generic             I.write I.write_bytes socket msg vo trace >>= fun () ->
-    network_receive_generic I.create I.read  I.read_bytes  socket trace
+    network_receive_generic I.create I.read  I.read_bytes  socket I.show_socket trace
 
   let get_session t  = t.session
 
