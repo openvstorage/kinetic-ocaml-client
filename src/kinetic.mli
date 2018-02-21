@@ -16,6 +16,7 @@ module Config: sig
       max_outstanding_write_requests: int;
       max_message_size: int;
       max_key_range_count: int;
+      max_operation_count_per_batch: int;
       (* are in protocol definition but device doesn't send them *)
       (* max_operation_count_per_batch: int; *)
       (* max_batch_count_per_device: int; *)
