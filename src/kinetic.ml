@@ -361,7 +361,7 @@ module Config = struct
         max_outstanding_write_requests: int;
         max_message_size: int;
         max_key_range_count: int;
-        (* max_operation_count_per_batch: int; *)
+        max_operation_count_per_batch: int;
         (* max_batch_count_per_device: int; *)
       }
 
@@ -396,7 +396,7 @@ module Config = struct
         max_outstanding_write_requests;
         max_message_size;
         max_key_range_count;
-        (* max_operation_count_per_batch; *)
+        max_operation_count_per_batch = 15;
         (* max_batch_count_per_device; *)
       }
 
@@ -416,6 +416,7 @@ module Config = struct
       add " max_outstanding_read_requests:%i;" t.max_outstanding_read_requests;
       add " max_oustranding_write_requests:%i;" t.max_outstanding_write_requests;
       add " max_message_size:%i;" t.max_message_size;
+      add " max_operation_count_per_batch:%i;" t.max_operation_count_per_batch;
       (*
       add " max_key_range_count:%i;" t.max_operation_count_per_batch;
       add " max_batch_count_per_device:%i;" t.max_batch_count_per_device;
