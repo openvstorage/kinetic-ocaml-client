@@ -149,35 +149,64 @@ let batch_delete_non_existing client =
   K.batch_delete batch de ~forced:(Some true) >>= fun () ->
   Lwt_log.debug_f "delete sent" >>= fun () ->
   K.end_batch_operation batch >>= fun (ok, conn) ->
-  assert (ok = true);
+  assert ok;
   Lwt_log.debug_f "end_batch sent" >>= fun () ->
   Lwt.return ()
+
+let _add_put batch key v =
+  let v_slice = v,0,Bytes.length v in
+  let pe =
+    let tag = K.make_sha1 v_slice in
+    K.Entry.make
+      ~key
+      ~db_version:None
+      ~new_version:None
+      (Some (v_slice, tag))
+  in
+  K.batch_put batch pe ~forced:(Some true)
 
 let batch_3_puts client : unit Lwt.t =
   K.start_batch_operation client
   >>= fun batch ->
-  let add_put key v =
-    let v_slice = v,0,Bytes.length v in
-    let pe =
-      let tag = K.make_sha1 v_slice in
-      K.Entry.make
-             ~key
-             ~db_version:None
-             ~new_version:None
-             (Some (v_slice, tag))
-    in
-    K.batch_put batch pe ~forced:(Some true)
-  in
   let make_key i = Printf.sprintf "batch_test_3_puts:key_%03i" i in
   let key0 = make_key 0 in
   let key1 = make_key 1 in
   let key2 = make_key 2 in
-  add_put key0 key0 >>= fun () ->
-  add_put key1 key1 >>= fun () ->
-  add_put key2 key2 >>= fun () ->
+  _add_put batch key0 key0 >>= fun () ->
+  _add_put batch key1 key1 >>= fun () ->
+  _add_put batch key2 key2 >>= fun () ->
   K.end_batch_operation batch >>= fun (ok, conn) ->
-  assert (ok = true);
+  assert ok;
   Lwt.return_unit
+
+
+let batch_too_fat client : unit Lwt.t =
+  let make_key i = Printf.sprintf "batch_too_fat:key_%03i" i in
+  let session = K.get_session client in
+  let config = K.get_config session in
+  let max = config.max_operation_count_per_batch in
+  let n = max + 5 in
+  let rec loop batch i =
+    if i = n
+    then Lwt.return_unit
+    else
+      begin
+        let key = make_key 0 in
+        _add_put batch key key >>= fun () ->
+        loop batch (i+1)
+      end
+  in
+  Lwt.catch
+    (fun () ->
+      K.start_batch_operation client >>= fun batch ->
+      loop batch 0 >>= fun () ->
+      K.end_batch_operation batch >>= fun (ok, conn) ->
+      assert false
+    )
+    (fun exn ->
+      Lwt_log.info_f ~exn "HIER" >>= fun () ->
+     assert false
+    )
 
 let test_crc32 client =
   let key = "test_crc32_key" in
@@ -526,6 +555,7 @@ let run_tests ip port trace ssl filter =
 
         "crc32", test_crc32;
         "get_capacities", get_capacities_test;
+        "batch_too_fat", batch_too_fat;
         (* "put_no_tag", test_put_no_tag; *)
         (*"peer2peer", peer2peer_test;*)
       ]
