@@ -18,7 +18,18 @@ let show_test_result = function
   | Failed s -> Printf.sprintf "Failed(%S)" s
   | Skipped -> "Skipped"
 
-let lwt_test name (f:unit -> unit Lwt.t) : test_result Lwt.t=
+let ( >>=? ) = Lwt_result.Infix.(>>=)
+
+
+
+open Kinetic
+module K = Make(BytesIntegration)
+
+let assert_test_result = function
+  | Result.Ok _  -> Ok                    |> Lwt.return
+  | Error e      -> Failed (Error.show e) |> Lwt.return
+
+let lwt_test name (f:unit -> unit K.result) : test_result Lwt.t=
   Lwt_log.debug_f "starting:%s" name >>= fun () ->
   let timeout = 300.
   (* overkill value, but:
@@ -29,9 +40,8 @@ let lwt_test name (f:unit -> unit Lwt.t) : test_result Lwt.t=
   in
   Lwt.catch
      (fun () ->
-      Lwt_unix.with_timeout timeout f
-      >>= fun () ->
-      Lwt.return Ok
+       Lwt_unix.with_timeout timeout f
+       >>= assert_test_result
      )
      (fun exn ->
       Lwt_log.info_f ~exn "failing:%s" name >>= fun () ->
@@ -41,14 +51,13 @@ let lwt_test name (f:unit -> unit Lwt.t) : test_result Lwt.t=
   Lwt_log.debug_f "end of :%s" name >>= fun () ->
   Lwt.return r
 
-open Kinetic
-module K = Make(BytesIntegration)
-               
-let test_get_non_existing client =
-  K.get client "I do not exist?"
-  >>= fun vo ->
-  assert (vo = None);
-  Lwt.return ()
+
+
+let test_get_non_existing client  : unit K.result =
+  K.get client "I do not exist?" >>=? fun vo ->
+  match vo with
+  | None -> Lwt_result.return ()
+  | Some _ -> Error.Generic(__FILE__,__LINE__, "test case assert failed") |> Lwt_result.fail 
 
 let test_put_no_tag client =
   let key = "test_put_no_tag" in
@@ -64,8 +73,9 @@ let test_put_no_tag client =
     ~forced:None
     ~tag:None
     ~synchronization
-  >>= fun () ->
-  Lwt.return ()
+  >>= function
+  | Error (Error.KineticError(16,"Tag required")) -> Lwt_result.return ()
+  | _ -> Error.Generic(__FILE__,__LINE__, "test case assert failed") |> Lwt_result.fail
   
 
 let test_put_empty_string client =
@@ -83,19 +93,22 @@ let test_put_empty_string client =
     ~forced:None
     ~tag
     ~synchronization
-  >>= fun () ->
-  K.get client key >>= fun vco ->
-  let () = match vco with
-    | None -> failwith "should have value"
-    | Some (v2, version) ->
-     begin
-       assert (v2 = v);
-       assert (version = Some "");
-     end
-  in
-  Lwt.return_unit
-  
-let test_noop client = K.noop client
+  >>=? fun () ->
+  K.get client key >>=? fun vco ->
+  Lwt_log.debug_f "vco=%s" (vco2s vco) >>= fun () ->
+  match vco with
+  | None -> Error.Generic(__FILE__,__LINE__, "test case assert failed") |> Lwt_result.fail
+  | Some (v2, version) ->
+     if v2 <> v
+     then Error.Generic(__FILE__,__LINE__, "test case assert failed") |> Lwt_result.fail
+     else
+       if version <> Some ""
+       then Error.Generic(__FILE__,__LINE__, "test case assert failed") |> Lwt_result.fail
+       else Lwt_result.return ()
+
+let test_noop client =
+  K.noop client 
+
 
 let batch_single_put client =
   K.start_batch_operation client >>= fun batch ->
@@ -108,13 +121,12 @@ let batch_single_put client =
              ~new_version:(Some "ZZZ")
              (Some (v_slice,tag))
   in
-  K.batch_put batch pe ~forced:(Some true) >>= fun () ->
-  K.end_batch_operation batch >>= fun conn ->
-  Lwt.return ()
+  K.batch_put batch pe ~forced:(Some true) >>=? fun () ->
+  K.end_batch_operation batch >>=? fun conn ->
+  Lwt_result.return ()
 
-let batch_test_put_delete client : unit Lwt.t=
-  K.start_batch_operation client
-  >>= fun batch ->
+let batch_test_put_delete client =
+  K.start_batch_operation client >>= fun batch ->
   let v = "XXX" in
   let v_slice = v,0,Bytes.length v in
   let tag = K.make_sha1 v_slice in
@@ -124,17 +136,16 @@ let batch_test_put_delete client : unit Lwt.t=
              ~new_version:None
              (Some (v_slice, tag))
   in
-  K.batch_put batch pe  ~forced:(Some true) >>= fun () ->
-
+  K.batch_put batch pe  ~forced:(Some true) >>=? fun () ->
   let de = K.Entry.make
              ~key:"xxx"
              ~db_version:None
              ~new_version: None
              None
   in
-  K.batch_delete batch de ~forced:(Some true) >>= fun () ->
-  K.end_batch_operation batch >>= fun conn ->
-  Lwt.return ()
+  K.batch_delete batch de ~forced:(Some true) >>=? fun () ->
+  K.end_batch_operation batch >>=? fun conn ->
+  Lwt_result.return ()
 
 
 let batch_delete_non_existing client =
@@ -146,12 +157,12 @@ let batch_delete_non_existing client =
       ~new_version:None
       None
   in
-  K.batch_delete batch de ~forced:(Some true) >>= fun () ->
+  K.batch_delete batch de ~forced:(Some true) >>=? fun () ->
   Lwt_log.debug_f "delete sent" >>= fun () ->
-  K.end_batch_operation batch >>= fun (ok, conn) ->
-  assert ok;
+  K.end_batch_operation batch >>=? fun conn ->
   Lwt_log.debug_f "end_batch sent" >>= fun () ->
-  Lwt.return ()
+  Lwt_result.return ()
+
 
 let _add_put batch key v =
   let v_slice = v,0,Bytes.length v in
@@ -165,48 +176,54 @@ let _add_put batch key v =
   in
   K.batch_put batch pe ~forced:(Some true)
 
-let batch_3_puts client : unit Lwt.t =
-  K.start_batch_operation client
-  >>= fun batch ->
+
+let batch_3_puts client =
+  K.start_batch_operation client >>= fun batch ->
   let make_key i = Printf.sprintf "batch_test_3_puts:key_%03i" i in
   let key0 = make_key 0 in
   let key1 = make_key 1 in
   let key2 = make_key 2 in
-  _add_put batch key0 key0 >>= fun () ->
-  _add_put batch key1 key1 >>= fun () ->
-  _add_put batch key2 key2 >>= fun () ->
-  K.end_batch_operation batch >>= fun (ok, conn) ->
-  assert ok;
-  Lwt.return_unit
+  _add_put batch key0 key0 >>=? fun () ->
+  _add_put batch key1 key1 >>=? fun () ->
+  _add_put batch key2 key2 >>=? fun () ->
+  K.end_batch_operation batch >>=? fun conn ->
+  Lwt_result.return ()
 
 
-let batch_too_fat client : unit Lwt.t =
-  let make_key i = Printf.sprintf "batch_too_fat:key_%03i" i in
+let batch_too_fat client =
   let session = K.get_session client in
-  let config = K.get_config session in
-  let max = config.max_operation_count_per_batch in
-  let n = max + 5 in
-  let rec loop batch i =
-    if i = n
-    then Lwt.return_unit
-    else
-      begin
-        let key = make_key 0 in
-        _add_put batch key key >>= fun () ->
-        loop batch (i+1)
-      end
-  in
-  Lwt.catch
-    (fun () ->
-      K.start_batch_operation client >>= fun batch ->
-      loop batch 0 >>= fun () ->
-      K.end_batch_operation batch >>= fun (ok, conn) ->
-      assert false
-    )
-    (fun exn ->
-      Lwt_log.info_f ~exn "HIER" >>= fun () ->
-     assert false
-    )
+  let cfg = K.get_config session in
+  let max = cfg.max_operation_count_per_batch in
+  match max with
+  | None ->
+     Lwt_log.debug_f "client version:%s => no testing needed Ok" cfg.version
+     >>= fun () ->
+     Lwt_result.return ()
+  | Some max ->
+     begin
+       let make_key i = Printf.sprintf "batch_too_fat:key_%03i" i in
+       let n = max + 5 in
+       let rec loop batch i =
+         if i = n
+         then Lwt_result.return ()
+         else
+           begin
+             let key = make_key 0 in
+             _add_put batch key key >>=? fun () ->
+             loop batch (i+1)
+           end
+       in
+       K.start_batch_operation client >>= fun batch ->
+       loop batch 0 >>=? fun () ->
+       K.end_batch_operation batch
+       >>= function
+       | Result.Ok _   -> assert false (* It should fail !*)
+       | Result.Error (Error.KineticError(21, msg) as e) -> (* needs to be 21 = too many operations in a batch *)
+          Lwt_log.debug_f "errored, as expected: %s" (Error.show e) >>= fun () ->
+          Lwt_result.return ()
+       | _ -> assert false
+     end
+
 
 let test_crc32 client =
   let key = "test_crc32_key" in
@@ -221,12 +238,11 @@ let test_crc32 client =
     ~forced:None
     ~tag:(Some tag)
     ~synchronization
-  
 
 let test_put_get_delete client =
   let rec loop i =
     if i = 400
-    then Lwt.return ()
+    then Lwt_result.return ()
     else
       let key = Printf.sprintf "x_%05i" i  in
       let v = Printf.sprintf "value_%05i" i in
@@ -242,8 +258,8 @@ let test_put_get_delete client =
         ~forced:None
         ~tag:(Some tag)
         ~synchronization
-      >>= fun () ->
-      K.get client key >>= fun vco ->
+      >>=? fun () ->
+      K.get client key >>=? fun vco ->
       Lwt_io.printlf "drive[%S]=%s%!" key (vco2s vco) >>= fun () ->
       let () = match vco with
       | None -> failwith "should be present"
@@ -253,9 +269,9 @@ let test_put_get_delete client =
            assert (version = Some "");
          end
       in
-      K.delete_forced client key >>= fun () ->
+      K.delete_forced client key >>=? fun () ->
       Lwt_io.printlf "deleted %S" key >>= fun () ->
-      K.get client key >>= fun vco ->
+      K.get client key >>=? fun vco ->
       Lwt_io.printlf "drive[%S]=%s" key (vco2s vco) >>= fun () ->
       assert (vco = None);
       loop (i+1)
@@ -274,14 +290,16 @@ let test_put_largish client =
     ~forced:(Some true)
     ~synchronization
     ~tag:(Some tag)
-  >>=fun () ->
-  K.get client key >>= fun vco ->
-  assert (vco <> None);
-  Lwt.return ()
+  >>=? fun () ->
+  K.get client key >>=? function
+  | None    -> Error.Generic(__FILE__,__LINE__, "test case assert failed") |> Lwt_result.fail
+  | Some vc -> Lwt_result.return ()
+
 
 let test_put_version client =
   let key = "with_version" in
-  K.delete_forced client key >>= fun () ->
+  K.delete_forced client key >>=? fun () ->
+  Lwt_log.debug_f "deleted %S" key >>= fun () ->
   let v = "the_value" in
   let v_slice = v,0,Bytes.length v in
   let tag = K.make_sha1 v_slice in
@@ -294,39 +312,35 @@ let test_put_version client =
     ~forced:(Some true)
     ~synchronization
     ~tag:(Some tag)
-  >>= fun () ->
-  K.get client key >>= fun vco ->
-  Lwt_io.printlf "vco=%s" (vco2s vco) >>= fun () ->
-  begin
-    Lwt.catch
-      (fun () ->
-       let new_version = Some "1" in
-       let v2 = "next_value" in
-       let v2_slice = v2,0,Bytes.length v2 in
-       let tag2 = K.make_sha1 v2_slice in
-       K.put
-         client key v2_slice
-         ~db_version:new_version ~new_version
-         ~forced:None
-         ~synchronization
-         ~tag:(Some tag2)
-       >>= fun () ->
-       Lwt.return false
-      )
-      (fun exn -> Lwt.return true)
-  end
+  >>=? fun () ->
+  K.get client key >>=? fun vco ->
+  Lwt_log.debug_f "vco=%s" (vco2s vco) >>= fun () ->
+  let new_version = Some "1" in
+  let v2 = "next_value" in
+  let v2_slice = v2,0,Bytes.length v2 in
+  let tag2 = K.make_sha1 v2_slice in
+  Lwt_log.debug_f "new_version:%s" (so2s new_version) >>= fun () ->
+  K.put
+    client key v2_slice
+    ~db_version:new_version ~new_version
+    ~forced:None
+    ~synchronization
+    ~tag:(Some tag2)
   >>= function
-  | false -> Lwt.fail (Failure "bad behaviour")
-  | true ->
-     K.get client key >>= fun vco2 ->
+  | Result.Error (Error.KineticError(_, _)) ->
+     K.get client key >>=? fun vco2 ->
      Lwt_io.printlf "vco2=%s" (vco2s vco2) >>= fun () ->
-     Lwt.return ()
+     Lwt_result.return ()
+  | Result.Error e ->
+     Lwt_log.warning_f "r:%s" (Error.show e) >>= fun () ->
+     Error.Generic(__FILE__,__LINE__, "test case assert failed") |> Lwt_result.fail
+  | _ -> Error.Generic(__FILE__,__LINE__, "test case assert failed") |> Lwt_result.fail
 
 let fill client n =
   let synchronization = Some K.WRITEBACK in
   let rec loop i =
     if i = n
-    then Lwt.return ()
+    then Lwt_result.return ()
     else
       let key = Printf.sprintf "x_%05i" i in
       let v = Printf.sprintf "value_%05i" i in
@@ -343,7 +357,7 @@ let fill client n =
         ~forced:(Some true)
         ~synchronization
         ~tag:(Some tag)
-      >>= fun () ->
+      >>=? fun () ->
       loop (i+1)
   in
   loop 0
@@ -351,31 +365,30 @@ let fill client n =
 
 
 let range_test client =
-  fill client 1000 >>= fun () ->
+  fill client 1000 >>=? fun () ->
   K.get_key_range
     client
     "x" true "y" true false 20
-  >>= fun keys ->
+  >>=? fun keys ->
   Lwt_io.printlf "[%s]\n%!" (String.concat "; " keys) >>= fun () ->
   assert (List.length keys = 20);
   assert (List.hd keys= "x_00000");
-  Lwt.return ()
+  Lwt_result.return ()
 
 let range_test_reverse client =
-  fill client 1000 >>= fun () ->
+  fill client 1000 >>=? fun () ->
   (* note the order, which differs from the specs *)
-  K.get_key_range client "x" true "y" true true 20
-  >>= fun keys ->
+  K.get_key_range client "x" true "y" true true 20 >>=? fun keys ->
   Lwt_io.printlf "[%s]\n%!" (String.concat "; " keys) >>= fun () ->
   assert (List.length keys = 20);
   assert (List.hd keys= "x_00999");
-  Lwt.return ()
+  Lwt_result.return ()
 
 
 let get_capacities_test client =
-  K.get_capacities client >>= fun (cap, fill_rate) ->
+  K.get_capacities client >>=? fun (cap, fill_rate) ->
   Lwt_io.printlf "(%Li,%f)" cap fill_rate >>= fun () ->
-  Lwt.return_unit
+  Lwt_result.return ()
 
 
 (*
@@ -447,14 +460,19 @@ let make_client ?ctx ?secret ?cluster_version ?trace ~ip ~port =
      in
      K.wrap_socket ?trace ?secret ?cluster_version ssl_socket closer
          
-let with_client ?ctx ?secret ?cluster_version ?trace ~ip ~port  f =
+let with_client ?ctx ?secret ?cluster_version ?trace ~ip ~port  (f:K.client -> 'a K.result) : 'a K.result =
   make_client ?ctx ?secret ?cluster_version ?trace ~ip ~port
-  >>= fun client ->
+  >>=? fun client ->
   Lwt.finalize
     (fun () -> f client)
     (fun () -> K.dispose client)
+
+let fail_on_error =
+  function
+    | Result.Ok x -> Lwt.return x
+    | Error e -> Lwt.fail_with (Error.show e)
   
-let run_with_client ip port trace ssl f =
+let run_with_client ip port trace ssl (f:K.client -> 'a K.result) : 'a  =
   let ctx =
     if ssl then
       begin
@@ -472,6 +490,7 @@ let run_with_client ip port trace ssl f =
       "ip:%S port:%i trace:%b" ip port trace
     >>= fun () ->
     with_client ?ctx ~ip ~port ~trace f
+    >>= fail_on_error
   in
   Lwt_log.add_rule "*" Lwt_log.Debug;
   Lwt_main.run t
@@ -482,18 +501,19 @@ let get_info ip port trace ssl =
     (fun client ->
       Lwt_io.printlf "config:%s" (client |> K.get_session |> K.get_config |> Config.show)
       >>= fun () ->
-      Lwt.return_unit
+      Lwt_result.return ()
     )
 
 
+
+               
 let instant_secure_erase ip port trace =
 
   let f client =
     let session = K.get_session client in
     let config = K.get_config session in
     Lwt_io.printlf "%s" (Config.show config) >>= fun () ->
-    K.instant_secure_erase client >>= fun () ->
-    Lwt.return_unit
+    K.instant_secure_erase client
   in
 
   let ssl = true in
@@ -516,53 +536,56 @@ let download_firmware ip port trace file_name =
     >>= fun () ->
     Lwt_io.printlf "update has %i bytes%!" size >>= fun () ->
     let v_slice = (slod,0,size) in
-    K.download_firmware client v_slice 
+    K.download_firmware client v_slice
   in
   let ssl = true in
   run_with_client ip port trace ssl f
 
 let run_tests ip port trace ssl filter =
-  let f client =
-    let run_tests tests =
-      Lwt_list.map_s
-        (fun (test_name, test) ->
-          if filter = [] || List.mem test_name filter
-          then
-            begin
-              lwt_test test_name (fun () -> test client)
-              >>= fun r ->
-              Lwt.return (test_name,r)
-            end
-          else
-            Lwt.return (test_name, Skipped)
-        )
-        tests
-    in
-    run_tests [
+  let run_tests client tests =
+    Lwt_list.map_s
+      (fun (test_name, test) ->
+        if filter = [] || List.mem test_name filter
+        then
+          begin
+            lwt_test test_name
+              (fun () -> test client)
+            >>= fun (tr: test_result) ->
+            Lwt.return (test_name, tr)
+          end
+        else
+          Lwt.return (test_name, Skipped)
+      )
+      tests
+  in
+  let f client : unit K.result =
+    run_tests client [
         "get_non_existing",test_get_non_existing;
         "noop", test_noop;
         "put_get_delete", test_put_get_delete;
         "put_version", test_put_version;
+
         "put_empty_string", test_put_empty_string;
         "put_largish", test_put_largish;
         "range_test", range_test;
         "range_test_reverse", range_test_reverse;
-
         "batch_single_put", batch_single_put;
         "batch_put_delete", batch_test_put_delete;
         "batch_delete_non_existing", batch_delete_non_existing;
         "batch_3_puts", batch_3_puts;
-
         "crc32", test_crc32;
         "get_capacities", get_capacities_test;
+        "put_no_tag", test_put_no_tag;
         "batch_too_fat", batch_too_fat;
-        (* "put_no_tag", test_put_no_tag; *)
+
         (*"peer2peer", peer2peer_test;*)
       ]
     >>= fun results ->
     Lwt_list.iter_s
       (fun (n, r) -> Lwt_io.printlf "%-32s => %s"  n (show_test_result r))
       results
+    >>= fun () ->
+    Lwt_result.return ()
   in
   run_with_client ip port trace ssl f
 

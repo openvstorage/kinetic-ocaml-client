@@ -39,16 +39,16 @@ The API is defined in [kinetic.mli](src/kinetic.mli)
 typically you'd do something like:
 
 ```OCaml
-    Kinetic.with_client ~ip:"127.0.0.1" ~port:8123
-    (fun client ->
-         Kinetic.put client
-             "the_key" (Some "the value")
-             ~db_version:None ~new_version:None
-             ~forced:true
-             ~synchronization:(Some Kinetic.WRITEBACK)
-         >>= fun () ->
-         ...
-    ) >>= fun ... ->
+    ...
+    Kinetic.wrap_socket socket
+    >>=? client ->
+    Kinetic.put client
+      "the_key" (Some "the value")
+      ~db_version:None ~new_version:None
+      ~forced:true
+      ~synchronization:(Some Kinetic.WRITEBACK)
+    >>=? fun () ->
+    ...
 
 ```
 
