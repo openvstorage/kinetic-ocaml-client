@@ -1,10 +1,11 @@
-let so2s = function
-  | None -> "None"
-  | Some s -> Printf.sprintf "Some(%S)" s
+(*
+  Copyright (C) iNuron - info@openvstorage.com
+  This file is part of Open vStorage. For license information, see <LICENSE.txt>
+*)
 
-let vco2s = function
-  | None -> "None"
-  | Some (v, version) -> Printf.sprintf "Some(%S, %s)" v (so2s version)
+open Kinetic_util
+
+let vco2s = show_option (fun (v,version) -> Printf.sprintf "Some(%S, %s)" v (so2s version))
 
 
 open Lwt
@@ -17,10 +18,6 @@ let show_test_result = function
   | Ok -> "Ok"
   | Failed s -> Printf.sprintf "Failed(%S)" s
   | Skipped -> "Skipped"
-
-let ( >>=? ) = Lwt_result.Infix.(>>=)
-
-
 
 open Kinetic
 module K = Make(BytesIntegration)

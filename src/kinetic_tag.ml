@@ -1,5 +1,10 @@
+(*
+  Copyright (C) iNuron - info@openvstorage.com
+  This file is part of Open vStorage. For license information, see <LICENSE.txt>
+*)
+
 open Kinetic_util
-   
+
 module Tag = struct
   type t =
     | Invalid of Bytes.t

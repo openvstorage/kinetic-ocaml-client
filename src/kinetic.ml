@@ -1,19 +1,11 @@
+(*
+  Copyright (C) iNuron - info@openvstorage.com
+  This file is part of Open vStorage. For license information, see <LICENSE.txt>
+*)
+
 open Cryptokit
 open Kinetic_util
-   
-let _decode_fixed32 s off =
-  let byte x = int_of_char s.[off + x] in
-  ((byte 3) lsl  0)
-  + ((byte 2) lsl  8)
-  + ((byte 1) lsl 16)
-  + ((byte 0) lsl 24)
-
-let _encode_fixed32 (s:bytes) off i =
-  let get_char i shift = char_of_int ((i land (0xff lsl shift)) lsr shift) in
-  Bytes.set s off (get_char i 24);
-  Bytes.set s (off + 1) (get_char i 16);
-  Bytes.set s (off + 2) (get_char i  8);
-  Bytes.set s (off + 3) (get_char i  0)
+open Kinetic_network
 
 let calculate_hmac secret msg =
   let sx0 = Bytes.create 4 in
@@ -24,52 +16,12 @@ let calculate_hmac secret msg =
   h # result
 
 
-
-
-let unwrap_option msg = function
-  | None -> failwith ("None " ^ msg)
-  | Some x -> x
-
-let map_option f = function
-  | None -> None
-  | Some x -> Some (f x)
-
-let get_option default = function
-  | None -> default
-  | Some x -> x
-
-let show_option x2s = function
-  | None -> "None"
-  | Some x -> Printf.sprintf "Some %s" (x2s x)
-
-let show_pair   x2s y2s (x,y) = Printf.sprintf "(%s, %s)" (x2s x) (y2s y)
-let show_tuple3 x2s y2s z2s (x,y,z) = Printf.sprintf "(%s, %s, %s)" (x2s x) (y2s y) (z2s z)
-
-let so2s   = show_option (fun x -> x)
-let so2hs  = show_option (fun x -> Printf.sprintf "0x%s" (to_hex x))
-let bo2s   = show_option (function | true -> "true" | false -> "false")
-let i64o2s = show_option Int64.to_string
-
-
-let trimmed x =
-  let x', post =
-    let len = String.length x in
-    if len < 20
-    then x, "" else
-      (String.sub x 0 20), Printf.sprintf "... (%i bytes)" len
-  in
-  Printf.sprintf "0x%S%s" (to_hex x')  post
-
-
 open Kinetic_piqi
 open Message
 open Command
 open Command_header
 open Command_body
 open Command_status
-
-let section = Lwt_log.Section.make "kinetic"
-let tracing = Lwt_log.Section.make "tracing"
 
 let _assert_type (command:Command.t) typ =
   let header  = unwrap_option "header" command.header in
@@ -127,20 +79,7 @@ let _parse_command (m:Message.t) =
   let command = parse_command command_buf in
   command
 
-module Error = struct
-  type msg = string
-
-  type t =
-    | KineticError of int * msg
-    | Generic of string * int * msg
-    | Timeout of float * msg
-
-  let show = function
-    | KineticError (rc,b) -> Printf.sprintf "KineticError(%i, %S)" rc b
-    | Generic (file,line, b) -> Printf.sprintf "Generic(%s,%i %S)" file line b
-    | Timeout (d,msg) -> Printf.sprintf "Timeout(%f,%S)" d msg
-end
-
+module Error = Kinetic_error.Error
 
 let _assert_success (command:Command.t) =
   let code = _get_status command |> _get_status_code in
@@ -259,107 +198,6 @@ let verify_limits log = ()
 
 open Lwt
 
-let read_exact_generic read_f socket (buf:'a) off len =
-  let rec loop off = function
-    | 0   -> Lwt.return_unit
-    | len -> read_f socket buf off len >>= fun bytes_read ->
-             loop (off + bytes_read) (len - bytes_read)
-  in
-  loop off len
-
-let write_exact_generic write_f socket (buf:'a) off len =
-  let rec loop off = function
-    | 0   -> Lwt.return_unit
-    | len -> write_f socket buf off len >>= fun bytes_written ->
-             loop (off + bytes_written) (len - bytes_written)
-  in
-  loop off len
-
-let maybe_read_generic create read_f socket v_len =
-    match v_len with
-    | 0 -> Lwt.return None
-    | n -> let v_buf = create v_len in
-           read_exact_generic read_f socket v_buf 0 v_len >>= fun () ->
-           Lwt.return (Some v_buf)
-
-
-
-
-let network_receive_generic
-      ~timeout
-      create
-      read_v read_bytes socket show_socket
-      trace
-  =
-    Lwt.catch
-    (fun () ->
-      Lwt_unix.with_timeout timeout
-        (fun () ->
-          let msg_bytes = Bytes.create 9 in
-          read_exact_generic read_bytes socket msg_bytes 0 9 >>= fun () ->
-          let magic = msg_bytes.[0] in
-          let proto_ln = _decode_fixed32 msg_bytes 1 in
-          let value_ln = _decode_fixed32 msg_bytes 5 in
-          (*
-    Lwt_io.printlf
-    "magic:%C proto_ln:%i value_ln:%i" magic proto_ln value_ln
-    >>= fun () ->
-           *)
-          assert (magic = 'F');
-          let proto_raw = Bytes.create proto_ln in
-          read_exact_generic read_bytes socket proto_raw 0 proto_ln >>= fun () ->
-          begin
-            if trace
-            then Lwt_log.debug_f
-                   ~section:tracing
-                   "(socket:%s) received: %s"
-                   (show_socket socket)
-                   (to_hex proto_raw)
-            else Lwt.return_unit
-          end
-          >>= fun () ->
-
-          maybe_read_generic create read_v socket value_ln >>= fun vo ->
-          let buf = Piqirun.init_from_string proto_raw in
-          let m = parse_message buf in
-          Lwt_result.return (m,vo, proto_raw)
-        )
-    )
-    (function
-     | Lwt_unix.Timeout -> Error.Timeout(timeout, "network_receive_generic") |> Lwt_result.fail
-     | exn -> Error.Generic(__FILE__,__LINE__, Printexc.to_string exn) |> Lwt_result.fail
-    )
-
-
-let network_send_generic
-      write_v write_bytes socket
-      proto_raw vo show_socket trace
-  =
-  let prelude_len = 9 in
-  let prelude = Bytes.create prelude_len in
-  Bytes.set prelude 0 'F';
-  let proto_raw_len = Bytes.length proto_raw in
-  _encode_fixed32 prelude 1 proto_raw_len;
-  let v_len = match vo with
-    | None -> 0
-    | Some (v,off,len) -> len
-  in
-  _encode_fixed32 prelude 5 v_len;
-    
-  begin
-    if trace
-    then
-      Lwt_log.debug_f ~section:tracing "(socket:%s) sending: %s\n" (show_socket socket) (to_hex proto_raw)
-    else
-      Lwt.return_unit
-  end
-    >>= fun () ->
-  write_exact_generic write_bytes socket prelude   0 prelude_len   >>= fun () ->
-  write_exact_generic write_bytes socket proto_raw 0 proto_raw_len >>= fun ()->
-  match vo with
-  | None   -> Lwt.return_unit
-  | Some (v,off,len) -> write_exact_generic write_v socket v off v_len 
-
 
 
 
@@ -374,162 +212,11 @@ let _get_ack_sequence (command:Command.t) =
   ack_seq
 
 
-module Config = struct
-    type t = {
-        vendor: string;
-        model:string;
-        serial_number: string;
-        world_wide_name: string;
-        version: string;
-        ipv4_addresses : string list;
-        max_key_size: int;
-        max_value_size: int;
-        max_version_size: int;
-        max_tag_size: int;
-        max_connections: int;
-        max_outstanding_read_requests: int;
-        max_outstanding_write_requests: int;
-        max_message_size: int;
-        max_key_range_count: int;
-        max_operation_count_per_batch: int option;
-        (* max_batch_count_per_device: int; *)
-        timeout : float;
-      }
+module Config = Kinetic_config.Config
+module Session = Kinetic_session.Session
+module Tag = Kinetic_tag.Tag
 
-    let make ~vendor ~world_wide_name ~model
-             ~serial_number
-             ~version
-             ~ipv4_addresses
-             ~max_key_size
-             ~max_value_size
-             ~max_version_size
-             ~max_tag_size
-             ~max_connections
-             ~max_outstanding_read_requests
-             ~max_outstanding_write_requests
-             ~max_message_size
-             ~max_key_range_count
-             ~max_operation_count_per_batch
-             ~timeout
-             (* ~max_batch_count_per_device *)
-      = {
-        vendor;
-        model;
-        serial_number;
-        world_wide_name;
-        version;
-        ipv4_addresses;
-        max_key_size;
-        max_value_size;
-        max_version_size;
-        max_tag_size;
-        max_connections;
-        max_outstanding_read_requests;
-        max_outstanding_write_requests;
-        max_message_size;
-        max_key_range_count;
-        max_operation_count_per_batch;
-        (* max_batch_count_per_device; *)
-        timeout;
-      }
-
-    let show t =
-      let buffer = Buffer.create 128 in
-      let add x = Printf.kprintf (fun s -> Buffer.add_string buffer s) x in
-      add "Config {";
-      add " version: %S;" t.version;
-      add " ipv4_addresses: [%s]" (String.concat ";" t.ipv4_addresses);
-      add " wwn:%S;" t.world_wide_name;
-      add " serial_number:%S;" t.serial_number;
-      add " max_key_size:%i;" t.max_key_size;
-      add " max_value_size:%i;" t.max_value_size;
-      add " max_version_size:%i;" t.max_version_size;
-      add " max_tag_size:%i;" t.max_tag_size;
-      add " max_connections:%i;" t.max_connections;
-      add " max_outstanding_read_requests:%i;" t.max_outstanding_read_requests;
-      add " max_oustranding_write_requests:%i;" t.max_outstanding_write_requests;
-      add " max_message_size:%i;" t.max_message_size;
-      add " max_operation_count_per_batch:%s;" (show_option string_of_int t.max_operation_count_per_batch);
-      add "}";
-      Buffer.contents buffer
-end
-
-module Session = struct
-
-    type t = {
-        secret: string;
-        cluster_version: int64;
-        identity: int64;
-        connection_id: int64;
-        mutable sequence: int64;
-        mutable batch_id: int32;
-
-        config : Config.t;
-        mutable trace: bool;
-        mutable in_batch :bool;
-      }
-
-
-    let incr_sequence t = t.sequence <- Int64.succ t.sequence
-    let set_sequence t i64 = t.sequence <- i64
-
-    let batch_on t = t.in_batch <- true
-    let batch_off t = t.in_batch <- false
-end
-
-type off = int
-type len = int
-type 'a slice = 'a * off * len
-
-type key = bytes
-type version = bytes option
-
-include Kinetic_tag
-
-module type INTEGRATION = sig
-  type value
-  type socket
-  val create : int -> value
-  val show : value -> string
-  val show_socket : socket -> string
-  val read  : socket -> value -> off -> len -> int Lwt.t
-  val write : socket -> value -> off -> len -> int Lwt.t
-
-  val read_bytes  : socket -> Bytes.t -> off -> len -> int Lwt.t
-  val write_bytes : socket -> Bytes.t -> off -> len -> int Lwt.t
-    
-  val make_sha1 : value -> off -> len -> Tag.t
-  val make_crc32: value -> off -> len -> Tag.t
-end
-
-module BytesIntegration = struct
-  type value = Bytes.t
-  type socket = Lwt_ssl.socket
-  let show_socket socket =
-    let fd = Lwt_ssl.get_unix_fd socket in
-    let (fdi:int) = Obj.magic fd in
-    string_of_int fdi
-
-  let create = Bytes.create
-  let show = trimmed
-
-  let read socket  = Lwt_ssl.read  socket
-  let write socket = Lwt_ssl.write socket
-
-  let read_bytes = read
-  let write_bytes = write
-                  
-  let make_sha1 v_buff v_off v_len  =
-    let h = Cryptokit.Hash.sha1() in
-      let () = h # add_substring v_buff v_off v_len in
-      Tag.Sha1 (h # result)
-
-  let make_crc32 _ _ _ = failwith "todo: BytesValue.make_crc32"
-end
-
-
-
-let (>>=?) = Lwt_result.bind
+include Kinetic_integration
 
 module Batch(I:INTEGRATION) =
 struct
@@ -1668,5 +1355,3 @@ module Make(I:INTEGRATION) = struct
 
 
   end
-
-

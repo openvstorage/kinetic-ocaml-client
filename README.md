@@ -74,4 +74,4 @@ Todo
 
 Have fun,
 
-   The CloudFounders team
+   The OpenVStorage team
