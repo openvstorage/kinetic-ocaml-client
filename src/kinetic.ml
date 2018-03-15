@@ -40,10 +40,7 @@ let _get_status_message (status:Command_status.t) =
   let msg = unwrap_option "status.message" status.status_message in
   msg
 
-let _get_detailed_status_message (status:Command_status.t) =
-  match status.detailed_message with
-  | Some x -> x
-  | None -> "None"
+let _get_detailed_status_message (status:Command_status.t) = get_option "None" status.detailed_message
 
 
 let status_code2i = function

@@ -25,7 +25,7 @@ module Config = struct
         max_operation_count_per_batch: int option;
         (* max_batch_count_per_device: int; *)
         timeout : float;
-      }
+      } [@@deriving show {with_path = false}]
 
     let make ~vendor ~world_wide_name ~model
              ~serial_number
@@ -64,23 +64,4 @@ module Config = struct
         timeout;
       }
 
-    let show t =
-      let buffer = Buffer.create 128 in
-      let add x = Printf.kprintf (fun s -> Buffer.add_string buffer s) x in
-      add "Config {";
-      add " version: %S;" t.version;
-      add " ipv4_addresses: [%s]" (String.concat ";" t.ipv4_addresses);
-      add " wwn:%S;" t.world_wide_name;
-      add " serial_number:%S;" t.serial_number;
-      add " max_key_size:%i;" t.max_key_size;
-      add " max_value_size:%i;" t.max_value_size;
-      add " max_version_size:%i;" t.max_version_size;
-      add " max_tag_size:%i;" t.max_tag_size;
-      add " max_connections:%i;" t.max_connections;
-      add " max_outstanding_read_requests:%i;" t.max_outstanding_read_requests;
-      add " max_oustranding_write_requests:%i;" t.max_outstanding_write_requests;
-      add " max_message_size:%i;" t.max_message_size;
-      add " max_operation_count_per_batch:%s;" (show_option string_of_int t.max_operation_count_per_batch);
-      add "}";
-      Buffer.contents buffer
 end
