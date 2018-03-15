@@ -1,5 +1,6 @@
 open Cryptokit
-
+open Kinetic_util
+   
 let _decode_fixed32 s off =
   let byte x = int_of_char s.[off + x] in
   ((byte 3) lsl  0)
@@ -22,14 +23,7 @@ let calculate_hmac secret msg =
   let () = h # add_string msg in
   h # result
 
-let to_hex = function
-  | "" -> ""
-  | s ->
-     let n_chars = String.length s * 3 in
-     let buf = Buffer.create n_chars in
-     let hex c = Printf.sprintf "%02x " (Char.code c) in
-     String.iter (fun c -> Buffer.add_string buf (hex c)) s;
-     Buffer.sub buf 0 (n_chars - 1)
+
 
 
 let unwrap_option msg = function
@@ -456,10 +450,6 @@ module Config = struct
       add " max_oustranding_write_requests:%i;" t.max_outstanding_write_requests;
       add " max_message_size:%i;" t.max_message_size;
       add " max_operation_count_per_batch:%s;" (show_option string_of_int t.max_operation_count_per_batch);
-      (*
-      add " max_key_range_count:%i;" t.max_operation_count_per_batch;
-      add " max_batch_count_per_device:%i;" t.max_batch_count_per_device;
-      *)
       add "}";
       Buffer.contents buffer
 end
@@ -493,20 +483,9 @@ type 'a slice = 'a * off * len
 
 type key = bytes
 type version = bytes option
-             
 
-module Tag = struct
-  type t =
-    | Invalid of Bytes.t
-    | Sha1 of Bytes.t
-    | Crc32 of int32
+include Kinetic_tag
 
-  let show = function
-    | Invalid h -> Printf.sprintf "Invalid %s" (to_hex h)
-    | Sha1 h -> Printf.sprintf "Sha1 %s" (to_hex h)
-    | Crc32 h ->Printf.sprintf "Crc32 %lx" h
-end
-           
 module type INTEGRATION = sig
   type value
   type socket
