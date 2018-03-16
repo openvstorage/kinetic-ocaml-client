@@ -5,6 +5,7 @@ true: package(lwt_ssl)
 true: package(lwt.unix)
 true: package(cryptokit)
 true: package(cmdliner)
+true: package(ppx_deriving.std)
 
 "src":include
 "examples":include

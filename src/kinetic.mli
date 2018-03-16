@@ -1,3 +1,8 @@
+(*
+  Copyright (C) iNuron - info@openvstorage.com
+  This file is part of Open vStorage. For license information, see <LICENSE.txt>
+*)
+
 module Config: sig
   type t = {
       vendor: string;
@@ -16,10 +21,10 @@ module Config: sig
       max_outstanding_write_requests: int;
       max_message_size: int;
       max_key_range_count: int;
-      max_operation_count_per_batch: int;
       (* are in protocol definition but device doesn't send them *)
-      (* max_operation_count_per_batch: int; *)
+      max_operation_count_per_batch: int option;
       (* max_batch_count_per_device: int; *)
+      timeout : float;
     }
   (*
 
@@ -86,6 +91,15 @@ module BytesIntegration : sig
   val make_crc32 : value -> off -> len -> Tag.t
 end
 
+module Error : sig
+  type msg = string
+  type t =
+    | KineticError of int * msg
+    | Generic of string * int * msg (* file, line, msg *)
+    | Timeout of float * msg        (* delta_t, msg *)
+
+  val show : t -> string
+end
 module Make(I:INTEGRATION) : sig
 
   module Entry : sig
@@ -123,11 +137,10 @@ module Make(I:INTEGRATION) : sig
     | WRITEBACK
     | FLUSH
 
-  type rc
-  type handler = rc -> unit Lwt.t
-               
-  exception Kinetic_exc of (int * bytes) list
 
+
+  type rc
+              
   val convert_rc : rc -> (int * bytes) option
 
   val get_config : session -> Config.t
@@ -137,22 +150,17 @@ module Make(I:INTEGRATION) : sig
   val make_sha1  : I.value slice -> Tag.t
   val make_crc32 : I.value slice -> Tag.t
 
+  type 'a result = ('a, Error.t) Lwt_result.t
+
+  val handshake : string -> int64 -> ?trace:bool -> ?timeout:float -> ?max_operation_count_per_batch:int 
+                  -> I.socket -> session result
   (** The initial contact with the device, which
         will send some information that is needed in the session
    *)
-
-  val handshake : string -> int64 -> ?trace:bool
-                  -> I.socket -> session Lwt.t
-
+  
+  val tracing : session -> bool -> unit
   (** turn on or of the trace logging of the raw messages
 
-   *)
-  val tracing : session -> bool -> unit
-  (** insert a key value pair.
-        db_version is the version that's supposed to be the current version
-        in the database.
-        new_version is the version of the key value pair _after_ the update.
-        forced updates happen regardless the db_version
    *)
 
   val put:
@@ -163,44 +171,49 @@ module Make(I:INTEGRATION) : sig
     -> forced:bool option
     -> synchronization: synchronization option
     -> tag: Tag.t option
-    -> unit Lwt.t
+    -> unit result
+  (** insert a key value pair.
+        db_version is the version that's supposed to be the current version
+        in the database.
+        new_version is the version of the key value pair _after_ the update.
+        forced updates happen regardless the db_version
+   *)
 
-  val delete_forced: client -> key -> unit Lwt.t
+  val delete_forced: client -> key -> unit result
 
-  val get : client -> key -> (I.value * version) option Lwt.t
+  val get : client -> key -> (I.value * version) option result
 
-  val noop: client -> unit Lwt.t
+  val noop: client -> unit result
 
-  val instant_secure_erase: ?pin:string -> client -> unit Lwt.t
+  val instant_secure_erase: ?pin:string -> client -> unit result
 
-  val download_firmware: client -> I.value slice -> unit Lwt.t
+  val download_firmware: client -> I.value slice -> unit result
 
   val get_key_range: client ->
                      key -> bool ->
                      key -> bool ->
                      bool -> int ->
-                     key list Lwt.t
+                     key list result
 
+  
+  val get_capacities : client -> (int64 * float) result
   (** returns capacity of the drive and portion full
    *)
-  val get_capacities : client -> (int64 * float) Lwt.t
 
+  
+  val start_batch_operation : client -> batch Lwt.t
   (**
-       Batches are atomic multi-updates.
-       Remark:
-       - while you're doing a batch, you're not supposed to use the client
-         for other things
-       - handlers should not raise exceptions as these have nowhere to go.
+     Batches are atomic multi-updates.
+     Remark:
+     - while you're doing a batch, you're not supposed to use the client
+       for other things
    *)
-  val start_batch_operation : ?handler:handler -> client -> batch Lwt.t
 
-  val batch_put  :  batch -> Entry.t -> forced:bool option -> unit Lwt.t
+  val batch_put  :  batch -> Entry.t -> forced:bool option -> unit result
 
-  val batch_delete: batch -> Entry.t -> forced:bool option -> unit Lwt.t
+  val batch_delete: batch -> Entry.t -> forced:bool option -> unit result
 
-  val end_batch_operation :
-    ?handler:handler ->
-    batch -> (bool * I.socket) Lwt.t
+  val end_batch_operation : batch -> I.socket result
 
   (* (* we might need it again in the future *)
     val p2p_push : session -> connection ->
@@ -208,14 +221,17 @@ module Make(I:INTEGRATION) : sig
                    (string * string option) list ->
                    unit Lwt.t
    *)
+    
 
   val wrap_socket :
     ?trace:bool ->
+    ?timeout:float ->
     ?secret:string ->
     ?cluster_version:int64 ->
+    ?max_operation_count_per_batch:int ->
     I.socket ->
     (unit -> unit Lwt.t)
-    -> client Lwt.t
+    -> client result
     
   val dispose : client -> unit Lwt.t
 

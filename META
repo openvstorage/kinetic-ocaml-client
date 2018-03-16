@@ -1,8 +1,8 @@
 # -*- conf -*-
 
 description = "Kinetic client"
-version = "0.0.7"
+version = "0.0.8"
 exists_if = "kinetic.cmx,kinetic.cmi,kinetic.mli"
-requires = "threads lwt lwt.unix cryptokit lwt_ssl"
+requires = "threads lwt lwt.unix cryptokit lwt_ssl ppx_deriving.show"
 archive(byte) = "kinetic.client.cma"
 archive(native) = "kinetic.client.cmxa"
