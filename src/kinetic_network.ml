@@ -27,7 +27,9 @@ let read_exact_generic read_f socket (buf:'a) off len =
   let rec loop off = function
     | 0   -> Lwt.return_unit
     | len -> read_f socket buf off len >>= fun bytes_read ->
-             loop (off + bytes_read) (len - bytes_read)
+             if bytes_read = 0
+             then Lwt.fail End_of_file
+             else loop (off + bytes_read) (len - bytes_read)
   in
   loop off len
 
