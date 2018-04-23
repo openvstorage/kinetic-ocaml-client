@@ -13,6 +13,7 @@ In concreto, you need:
   - cryptokit
   - cmdliner
   - lwt_ssl
+  - lwt_log
 
 
 If you have these, you can compile everything with:
