@@ -584,7 +584,7 @@ module Make(I:INTEGRATION) = struct
       | _ -> Lwt_result.return ()
 
 
-  let make_serialized_msg session mt body_manip =
+  let make_serialized_msg ?timeout session mt body_manip =
     let open Message_hmacauth in
     let open Session in
     let command = default_command () in
@@ -592,7 +592,7 @@ module Make(I:INTEGRATION) = struct
     let () = header.cluster_version <- Some session.cluster_version in
     let () = header.connection_id <- Some session.connection_id in
     let () = header.sequence <- Some session.sequence in
-
+    let () = header.timeout <- timeout in
     let () = command.header <- Some header in
 
     let body = default_command_body () in
@@ -689,7 +689,7 @@ module Make(I:INTEGRATION) = struct
     kv.synchronization <- sync;
     ()
 
-  let make_delete_forced client key =
+  let make_delete_forced ?timeout client key =
     let mb = set_attributes ~ko:(Some key)
                             ~db_version:None
                             ~new_version:None
@@ -697,9 +697,9 @@ module Make(I:INTEGRATION) = struct
                             ~maybe_tag:None
                             ~synchronization:(Some WRITEBACK)
     in
-    make_serialized_msg client.session `delete mb
+    make_serialized_msg ?timeout client.session `delete mb
 
-  let make_put client key value
+  let make_put ?timeout client key value
                ~db_version ~new_version
                ~forced ~synchronization
                ~tag
@@ -713,7 +713,7 @@ module Make(I:INTEGRATION) = struct
         ~synchronization
         ~maybe_tag:tag
     in
-    make_serialized_msg client.session `put mb
+    make_serialized_msg ?timeout client.session `put mb
 
   let _no_manip _ = ()
 
@@ -721,6 +721,7 @@ module Make(I:INTEGRATION) = struct
     make_serialized_msg session `flushalldata _no_manip
 
   let make_batch_message
+        ?timeout
         ?(body_manip = _no_manip)
         session mt batch_id =
     let open Message_hmacauth in
@@ -731,7 +732,7 @@ module Make(I:INTEGRATION) = struct
     header.connection_id <- Some session.connection_id;
     header.sequence <- Some session.sequence;
     header.batch_id <- Some batch_id;
-
+    header.timeout <- timeout;
     let () = command.header <- Some header in
 
     let body = default_command_body () in
@@ -756,8 +757,8 @@ module Make(I:INTEGRATION) = struct
     let proto_raw = Piqirun.to_string(gen_message m) in
     proto_raw
 
-  let make_start_batch session batch_id =
-    make_batch_message session `start_batch batch_id
+  let make_start_batch ?timeout session batch_id =
+    make_batch_message ?timeout session `start_batch batch_id
 
   let make_end_batch (b:B.t) =
     let open B in
@@ -805,6 +806,7 @@ module Make(I:INTEGRATION) = struct
     else Lwt.return_unit
 
   let put
+        ?timeout
         (client:client) k
         ((v_buf, v_off, v_len) as v_slice)
         ~db_version ~new_version
@@ -817,7 +819,7 @@ module Make(I:INTEGRATION) = struct
     _assert_value_size client.session v_len >>= fun () ->
     let msg =
       make_put
-        client k v_slice
+        ?timeout client k v_slice
         ~db_version ~new_version
         ~forced ~synchronization
         ~tag
@@ -829,10 +831,10 @@ module Make(I:INTEGRATION) = struct
     let () = Session.incr_sequence client.session in
     _assert_both r command `put_response `success
 
-  let delete_forced (client:client) k =
+  let delete_forced ?timeout (client:client) k =
     _assert_open client >>= fun () ->
     _assert_no_batch client >>= fun () ->
-    let msg = make_delete_forced client k in
+    let msg = make_delete_forced ?timeout client k in
     _call client msg None >>=? fun (r, vo, _ ) ->
     _assert_response r client >>=? fun () ->
     assert (vo = None);
@@ -844,7 +846,7 @@ module Make(I:INTEGRATION) = struct
 
 
 
-  let make_get session key =
+  let make_get ?timeout session key =
     let mb = set_attributes ~ko:(Some key)
                             ~db_version:None
                             ~new_version:None
@@ -852,9 +854,9 @@ module Make(I:INTEGRATION) = struct
                             ~synchronization:None
                             ~maybe_tag:None
     in
-    make_serialized_msg session `get mb
+    make_serialized_msg ?timeout session `get mb
 
-  let get client k =
+  let get ?timeout client k =
     _assert_open client >>= fun () ->
     _assert_no_batch client >>= fun () ->
     let msg = make_get client.session k in
@@ -953,7 +955,7 @@ module Make(I:INTEGRATION) = struct
     body.range <- Some range;
     ()
 
-  let make_get_key_range session
+  let make_get_key_range ?timeout session
                          start_key sinc
                          end_key einc
                          reverse_results
@@ -964,7 +966,7 @@ module Make(I:INTEGRATION) = struct
                     reverse_results
                     max_results
       in
-      make_serialized_msg session `getkeyrange manip
+      make_serialized_msg ?timeout session `getkeyrange manip
 
   let get_key_range_result (command : Command.t) =
     match command.body with
@@ -976,14 +978,14 @@ module Make(I:INTEGRATION) = struct
       keys
 
 
-  let get_key_range client
+  let get_key_range ?timeout client
                     (start_key:string) sinc
                     (end_key:string) einc
                     (reverse_results:bool)
                     (max_results:int) =
     _assert_open client >>= fun () ->
     _assert_no_batch client >>= fun () ->
-    let msg = make_get_key_range client.session start_key sinc
+    let msg = make_get_key_range ?timeout client.session start_key sinc
                                  end_key einc reverse_results
                                  max_results
     in
@@ -1014,7 +1016,7 @@ module Make(I:INTEGRATION) = struct
        B.failed batch e 
 
   let start_batch_operation
-        client =
+        ?timeout client =
     _assert_open client >>= fun () ->
     _assert_no_batch client >>= fun () ->
     let open Session in
@@ -1022,7 +1024,7 @@ module Make(I:INTEGRATION) = struct
     let socket = client.socket in
     let batch_id = session.batch_id in
     let () = session.batch_id <- Int32.succ batch_id in
-    let msg = make_start_batch session batch_id in
+    let msg = make_start_batch ?timeout session batch_id in
     network_send_generic I.write I.write_bytes socket msg None I.show_socket session.Session.trace >>= fun () ->
     let batch = B.make session socket batch_id in
     B.add_handler
@@ -1162,7 +1164,7 @@ module Make(I:INTEGRATION) = struct
     Lwt_result.return ()
 
 
-  let make_noop session =
+  let make_noop ?timeout session =
     let mb = set_attributes ~ko:None
                             ~db_version:None
                             ~new_version:None
@@ -1170,7 +1172,7 @@ module Make(I:INTEGRATION) = struct
                             ~synchronization:None
                             ~maybe_tag:None
     in
-    make_serialized_msg session `noop mb
+    make_serialized_msg ?timeout session `noop mb
 
   (*
 
@@ -1202,10 +1204,10 @@ module Make(I:INTEGRATION) = struct
       make_serialized_msg session `peer2_peerpush manip
 
  *)
-  let noop client =
+  let noop ?timeout client =
     _assert_open client >>= fun () ->
     _assert_no_batch client >>= fun () ->
-    let msg = make_noop client.session in
+    let msg = make_noop ?timeout client.session in
     let vo = None in
     _call client msg vo >>=? fun (r,vo, _) ->
     assert (vo = None);

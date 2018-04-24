@@ -43,7 +43,7 @@ type 'a slice = 'a * off * len
 
 type key = bytes
 type version = bytes option
-             
+type timeout_ms = int64
 
 
 module Tag : sig
@@ -164,6 +164,7 @@ module Make(I:INTEGRATION) : sig
    *)
 
   val put:
+    ?timeout:timeout_ms ->
     client ->
     key -> I.value slice
     -> db_version:version
@@ -179,17 +180,17 @@ module Make(I:INTEGRATION) : sig
         forced updates happen regardless the db_version
    *)
 
-  val delete_forced: client -> key -> unit result
+  val delete_forced: ?timeout:timeout_ms -> client -> key -> unit result
 
-  val get : client -> key -> (I.value * version) option result
+  val get : ?timeout:timeout_ms -> client -> key -> (I.value * version) option result
 
-  val noop: client -> unit result
+  val noop: ?timeout:timeout_ms -> client -> unit result
 
   val instant_secure_erase: ?pin:string -> client -> unit result
 
   val download_firmware: client -> I.value slice -> unit result
 
-  val get_key_range: client ->
+  val get_key_range: ?timeout:timeout_ms -> client ->
                      key -> bool ->
                      key -> bool ->
                      bool -> int ->
@@ -201,7 +202,7 @@ module Make(I:INTEGRATION) : sig
    *)
 
   
-  val start_batch_operation : client -> batch Lwt.t
+  val start_batch_operation : ?timeout:timeout_ms -> client -> batch Lwt.t
   (**
      Batches are atomic multi-updates.
      Remark:
