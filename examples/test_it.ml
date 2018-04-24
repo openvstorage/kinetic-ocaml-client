@@ -103,6 +103,22 @@ let test_put_empty_string client =
        then Error.Generic(__FILE__,__LINE__, "test case assert failed") |> Lwt_result.fail
        else Lwt_result.return ()
 
+let test_put_timeout client =
+  let key = "test_put_timeout" in
+  let v = key in
+  let v_slice = key,0,Bytes.length v in
+  let tag = K.make_sha1 v_slice in
+  let timeout = 1L in (* 1 ms *)
+  K.put ~timeout client key v_slice
+    ~db_version:None
+    ~new_version:None
+    ~forced:None
+    ~tag:(Some tag)
+    ~synchronization:(Some K.WRITETHROUGH)
+  >>= fun e ->
+  (* it does not timeout ? *)
+  Lwt_result.return ()
+
 let test_noop client =
   K.noop client 
 
@@ -563,6 +579,7 @@ let run_tests ip port trace ssl filter =
         "put_version", test_put_version;
 
         "put_empty_string", test_put_empty_string;
+        "put_timeout", test_put_timeout;
         "put_largish", test_put_largish;
         "range_test", range_test;
         "range_test_reverse", range_test_reverse;
