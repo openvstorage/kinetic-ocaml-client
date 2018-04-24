@@ -2,6 +2,7 @@ true: debug, annot, thread
 
 true: package(lwt)
 true: package(lwt_ssl)
+true: package(lwt_log)
 true: package(lwt.unix)
 true: package(cryptokit)
 true: package(cmdliner)
