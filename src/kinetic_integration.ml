@@ -13,6 +13,7 @@ type 'a slice = 'a * off * len
 type key = bytes
 type version = bytes option
 type timeout_ms = int64
+type priority = Kinetic_piqi.command_priority
 
 module type INTEGRATION = sig
   type value

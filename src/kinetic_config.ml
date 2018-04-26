@@ -23,6 +23,8 @@ module Config = struct
         max_message_size: int;
         max_key_range_count: int;
         max_operation_count_per_batch: int option;
+        max_batch_size : int option;
+        max_deletes_per_batch : int option;
         (* max_batch_count_per_device: int; *)
         timeout : float;
       } [@@deriving show {with_path = false}]
@@ -42,7 +44,10 @@ module Config = struct
              ~max_key_range_count
              ~max_operation_count_per_batch
              ~timeout
+             ~max_batch_size
+             ~max_deletes_per_batch
              (* ~max_batch_count_per_device *)
+
       = {
         vendor;
         model;
@@ -61,6 +66,8 @@ module Config = struct
         max_key_range_count;
         max_operation_count_per_batch;
         (* max_batch_count_per_device; *)
+        max_batch_size;
+        max_deletes_per_batch;
         timeout;
       }
 
