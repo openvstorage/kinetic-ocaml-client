@@ -42,7 +42,6 @@ let _get_status_message (status:Command_status.t) =
 
 let _get_detailed_status_message (status:Command_status.t) = get_option "None" status.detailed_message
 
-
 let status_code2i = function
   | `invalid_status_code     -> -1
   | `not_attempted           ->  0 (* p2p *)
@@ -164,8 +163,15 @@ let _assert_both m command typ code =
          let e = Error.Generic(__FILE__,__LINE__, msg) in
          Lwt_result.fail e
      end
-  | _ -> Printf.sprintf "unexpected auth_type %s" (auth_type2s auth_type) |> failwith
-
+  | `unsolicitedstatus ->
+     let status = _get_status command in
+     let ccode = _get_status_code status in
+     let sm = _get_status_message status in
+     let rci = status_code2i ccode in
+     Lwt_result.fail (Error.KineticError(rci, sm))
+  | `invalid_auth_type ->
+     let e = Error.Assert "invalid_auth_type" in
+     Lwt_result.fail e
 
 
 
@@ -522,6 +528,8 @@ module Make(I:INTEGRATION) = struct
       and max_batch_count_per_device =
         int_of "max_batch_count_per_device" limits.max_batch_count_per_device
        *)
+      and max_batch_size        = map_option Int32.to_int limits.max_batch_size
+      and max_deletes_per_batch = map_option Int32.to_int limits.max_deletes_per_batch
       in
       let max_operation_count_per_batch =
         if String.length version >= 8
@@ -546,6 +554,8 @@ module Make(I:INTEGRATION) = struct
                     ~max_message_size
                     ~max_key_range_count
                     ~max_operation_count_per_batch
+                    ~max_batch_size
+                    ~max_deletes_per_batch
                     ~timeout
                     (* ~max_batch_count_per_device *)
       in
@@ -577,14 +587,14 @@ module Make(I:INTEGRATION) = struct
            let sm = _get_status_message status in
            let rci = status_code2i ccode in
            let e = Error.KineticError(rci,sm) in
-           client.closer () >>= fun () ->
            client.closed <- true;
+           client.closer () >>= fun () ->
            Lwt_result.fail e
          end
       | _ -> Lwt_result.return ()
 
 
-  let make_serialized_msg ?timeout session mt body_manip =
+  let make_serialized_msg ?timeout ?priority session mt body_manip =
     let open Message_hmacauth in
     let open Session in
     let command = default_command () in
@@ -593,6 +603,7 @@ module Make(I:INTEGRATION) = struct
     let () = header.connection_id <- Some session.connection_id in
     let () = header.sequence <- Some session.sequence in
     let () = header.timeout <- timeout in
+    let () = header.priority <- priority in
     let () = command.header <- Some header in
 
     let body = default_command_body () in
@@ -689,7 +700,7 @@ module Make(I:INTEGRATION) = struct
     kv.synchronization <- sync;
     ()
 
-  let make_delete_forced ?timeout client key =
+  let make_delete_forced ?timeout ?priority client key =
     let mb = set_attributes ~ko:(Some key)
                             ~db_version:None
                             ~new_version:None
@@ -697,12 +708,14 @@ module Make(I:INTEGRATION) = struct
                             ~maybe_tag:None
                             ~synchronization:(Some WRITEBACK)
     in
-    make_serialized_msg ?timeout client.session `delete mb
+    make_serialized_msg ?timeout ?priority client.session `delete mb
 
-  let make_put ?timeout client key value
-               ~db_version ~new_version
-               ~forced ~synchronization
-               ~tag
+  let make_put
+        ?timeout ?priority client
+        key value
+        ~db_version ~new_version
+        ~forced ~synchronization
+        ~tag
     =
     let mb =
       set_attributes
@@ -713,15 +726,16 @@ module Make(I:INTEGRATION) = struct
         ~synchronization
         ~maybe_tag:tag
     in
-    make_serialized_msg ?timeout client.session `put mb
+    make_serialized_msg ?timeout ?priority client.session `put mb
 
   let _no_manip _ = ()
 
-  let make_flush session =
-    make_serialized_msg session `flushalldata _no_manip
+  let make_flush ?timeout ?priority session =
+    make_serialized_msg ?timeout ?priority session `flushalldata _no_manip
 
   let make_batch_message
         ?timeout
+        ?priority
         ?(body_manip = _no_manip)
         session mt batch_id =
     let open Message_hmacauth in
@@ -733,6 +747,7 @@ module Make(I:INTEGRATION) = struct
     header.sequence <- Some session.sequence;
     header.batch_id <- Some batch_id;
     header.timeout <- timeout;
+    header.priority <- priority;
     let () = command.header <- Some header in
 
     let body = default_command_body () in
@@ -757,8 +772,8 @@ module Make(I:INTEGRATION) = struct
     let proto_raw = Piqirun.to_string(gen_message m) in
     proto_raw
 
-  let make_start_batch ?timeout session batch_id =
-    make_batch_message ?timeout session `start_batch batch_id
+  let make_start_batch ?timeout ?priority session batch_id =
+    make_batch_message ?timeout ?priority session `start_batch batch_id
 
   let make_end_batch (b:B.t) =
     let open B in
@@ -807,6 +822,7 @@ module Make(I:INTEGRATION) = struct
 
   let put
         ?timeout
+        ?priority
         (client:client) k
         ((v_buf, v_off, v_len) as v_slice)
         ~db_version ~new_version
@@ -817,9 +833,11 @@ module Make(I:INTEGRATION) = struct
     _assert_open client >>= fun () ->
     _assert_no_batch client >>= fun () ->
     _assert_value_size client.session v_len >>= fun () ->
+
     let msg =
       make_put
-        ?timeout client k v_slice
+        ?timeout ?priority client
+        k v_slice
         ~db_version ~new_version
         ~forced ~synchronization
         ~tag
@@ -831,10 +849,10 @@ module Make(I:INTEGRATION) = struct
     let () = Session.incr_sequence client.session in
     _assert_both r command `put_response `success
 
-  let delete_forced ?timeout (client:client) k =
+  let delete_forced ?timeout ?priority (client:client) k =
     _assert_open client >>= fun () ->
     _assert_no_batch client >>= fun () ->
-    let msg = make_delete_forced ?timeout client k in
+    let msg = make_delete_forced ?timeout ?priority client k in
     _call client msg None >>=? fun (r, vo, _ ) ->
     _assert_response r client >>=? fun () ->
     assert (vo = None);
@@ -846,7 +864,7 @@ module Make(I:INTEGRATION) = struct
 
 
 
-  let make_get ?timeout session key =
+  let make_get ?timeout ?priority session key =
     let mb = set_attributes ~ko:(Some key)
                             ~db_version:None
                             ~new_version:None
@@ -854,12 +872,12 @@ module Make(I:INTEGRATION) = struct
                             ~synchronization:None
                             ~maybe_tag:None
     in
-    make_serialized_msg ?timeout session `get mb
+    make_serialized_msg ?timeout ?priority session `get mb
 
-  let get ?timeout client k =
+  let get ?timeout ?priority client k =
     _assert_open client >>= fun () ->
     _assert_no_batch client >>= fun () ->
-    let msg = make_get client.session k in
+    let msg = make_get ?timeout ?priority client.session k in
     _call client msg None >>=? fun (r,vo, proto_raw) ->
     _assert_response r client >>=? fun () ->
     let command = _parse_command r in
@@ -905,19 +923,19 @@ module Make(I:INTEGRATION) = struct
   let translate_log_type = function
     | CAPACITIES -> `capacities
 
-  let make_getlog session capacities =
+  let make_getlog ?timeout ?priority session capacities =
     let mb body =
       let getlog = default_command_get_log () in
       let open Command_get_log in
       getlog.types <- List.map translate_log_type capacities;
       body.get_log <- Some getlog
     in
-    make_serialized_msg session `getlog mb
+    make_serialized_msg ?timeout ?priority session `getlog mb
 
-  let get_capacities client =
+  let get_capacities ?timeout ?priority client =
     _assert_open client >>= fun () ->
     _assert_no_batch client >>= fun () ->
-    let msg = make_getlog client.session [CAPACITIES] in
+    let msg = make_getlog ?timeout ?priority client.session [CAPACITIES] in
     _call client msg None >>=? fun (m,vo, proto_raw) ->
     _assert_response m client >>=? fun () ->
     let command = _parse_command m in
@@ -942,31 +960,38 @@ module Make(I:INTEGRATION) = struct
        let e = Error.KineticError(code,sm) in
        Lwt_result.fail e
 
-  let set_kr start_key sinc end_key einc reverse_results max_results body =
+  let set_kr start_key sinc maybe_end_key reverse_results max_results body =
     let open Command_range in
     let range = default_command_range () in
     range.start_key <- Some start_key;
     range.start_key_inclusive <- Some sinc;
-    range.end_key   <- Some end_key;
-    range.end_key_inclusive <- Some einc;
+
+    let () =
+      match maybe_end_key with
+      | None -> ()
+      | Some (end_key, einc) ->
+         range.end_key   <- Some end_key;
+         range.end_key_inclusive <- Some einc
+    in
     range.reverse <- Some reverse_results;
     let max32 = Int32.of_int max_results in
     range.max_returned <- Some max32;
     body.range <- Some range;
     ()
 
-  let make_get_key_range ?timeout session
-                         start_key sinc
-                         end_key einc
-                         reverse_results
-                         max_results =
+  let make_get_key_range
+        ?timeout ?priority session
+        start_key sinc
+        maybe_end_key
+        reverse_results
+        max_results =
       let manip = set_kr
                     start_key sinc
-                    end_key einc
+                    maybe_end_key
                     reverse_results
                     max_results
       in
-      make_serialized_msg ?timeout session `getkeyrange manip
+      make_serialized_msg ?timeout ?priority session `getkeyrange manip
 
   let get_key_range_result (command : Command.t) =
     match command.body with
@@ -978,16 +1003,19 @@ module Make(I:INTEGRATION) = struct
       keys
 
 
-  let get_key_range ?timeout client
-                    (start_key:string) sinc
-                    (end_key:string) einc
-                    (reverse_results:bool)
-                    (max_results:int) =
+  let get_key_range
+        ?timeout ?priority client
+        (start_key:string) sinc
+        (maybe_end_key: (string * bool) option)
+        (reverse_results:bool)
+        (max_results:int) =
     _assert_open client >>= fun () ->
     _assert_no_batch client >>= fun () ->
-    let msg = make_get_key_range ?timeout client.session start_key sinc
-                                 end_key einc reverse_results
-                                 max_results
+    let msg = make_get_key_range
+                ?timeout ?priority client.session
+                start_key sinc
+                maybe_end_key reverse_results
+                max_results
     in
     _call client msg None >>=? fun (r,vo, _) ->
     _assert_response r client >>=? fun () ->
@@ -1016,7 +1044,7 @@ module Make(I:INTEGRATION) = struct
        B.failed batch e 
 
   let start_batch_operation
-        ?timeout client =
+        ?timeout ?priority client =
     _assert_open client >>= fun () ->
     _assert_no_batch client >>= fun () ->
     let open Session in
@@ -1024,7 +1052,7 @@ module Make(I:INTEGRATION) = struct
     let socket = client.socket in
     let batch_id = session.batch_id in
     let () = session.batch_id <- Int32.succ batch_id in
-    let msg = make_start_batch ?timeout session batch_id in
+    let msg = make_start_batch ?timeout ?priority session batch_id in
     network_send_generic I.write I.write_bytes socket msg None I.show_socket session.Session.trace >>= fun () ->
     let batch = B.make session socket batch_id in
     B.add_handler
@@ -1164,7 +1192,7 @@ module Make(I:INTEGRATION) = struct
     Lwt_result.return ()
 
 
-  let make_noop ?timeout session =
+  let make_noop ?timeout ?priority session =
     let mb = set_attributes ~ko:None
                             ~db_version:None
                             ~new_version:None
@@ -1172,7 +1200,7 @@ module Make(I:INTEGRATION) = struct
                             ~synchronization:None
                             ~maybe_tag:None
     in
-    make_serialized_msg ?timeout session `noop mb
+    make_serialized_msg ?timeout ?priority session `noop mb
 
   (*
 
@@ -1204,10 +1232,10 @@ module Make(I:INTEGRATION) = struct
       make_serialized_msg session `peer2_peerpush manip
 
  *)
-  let noop ?timeout client =
+  let noop ?timeout ?priority client =
     _assert_open client >>= fun () ->
     _assert_no_batch client >>= fun () ->
-    let msg = make_noop ?timeout client.session in
+    let msg = make_noop ?timeout ?priority client.session in
     let vo = None in
     _call client msg vo >>=? fun (r,vo, _) ->
     assert (vo = None);
@@ -1289,12 +1317,11 @@ module Make(I:INTEGRATION) = struct
     _assert_no_batch client >>= fun () ->
     let msg = make_download_firmware client.session in
     let vo = Some slod_data_slice in
-    _call client msg vo >>=? fun (r, vo,_) ->
+    _call client msg vo >>=? fun (r, vo, proto_raw) ->
     assert (vo = None);
     let command = _parse_command r in
     let () = Session.incr_sequence client.session in
     _assert_both r command `setup_response `success
-
     (*
 
     let p2p_push session (ic,oc) peer operations =
@@ -1347,10 +1374,14 @@ module Make(I:INTEGRATION) = struct
     >>=? fun session ->
     Lwt_result.return {session; socket; closer; closed = false}
 
-  let dispose t =
-    t.closer () >>= fun () ->
-    t.closed <- true;
-    Lwt.return_unit
-
+  let dispose (t:client) =
+    Lwt_log.debug_f "dispose: %s" ([%show : string list] (t.session.config.ipv4_addresses)) >>= fun () ->
+    if not t.closed
+    then
+      begin
+        t.closed <- true;
+        t.closer ()
+      end
+    else Lwt.return_unit
 
   end

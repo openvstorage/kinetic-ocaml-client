@@ -16,7 +16,7 @@ type test_result =
 
 let show_test_result = function
   | Ok -> "Ok"
-  | Failed s -> Printf.sprintf "Failed(%S)" s
+  | Failed s -> Printf.sprintf "Failed(%s)" s
   | Skipped -> "Skipped"
 
 open Kinetic
@@ -381,17 +381,21 @@ let range_test client =
   fill client 1000 >>=? fun () ->
   K.get_key_range
     client
-    "x" true "y" true false 20
+    "x" true
+    (Some ("y",true))
+    false 20
   >>=? fun keys ->
-  Lwt_io.printlf "[%s]\n%!" (String.concat "; " keys) >>= fun () ->
+  Lwt_io.printlf "result = [%s] (len = %i)\n%!" (String.concat "; " keys) (List.length keys) >>= fun () ->
   assert (List.length keys = 20);
+  let hd = List.hd keys in
+  Lwt_io.printlf "head = %s\n" hd >>= fun () ->
   assert (List.hd keys= "x_00000");
   Lwt_result.return ()
 
 let range_test_reverse client =
   fill client 1000 >>=? fun () ->
   (* note the order, which differs from the specs *)
-  K.get_key_range client "x" true "y" true true 20 >>=? fun keys ->
+  K.get_key_range client "x" true (Some("y",true)) true 20 >>=? fun keys ->
   Lwt_io.printlf "[%s]\n%!" (String.concat "; " keys) >>= fun () ->
   assert (List.length keys = 20);
   assert (List.hd keys= "x_00999");

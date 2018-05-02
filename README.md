@@ -1,7 +1,7 @@
 Kinetic OCaml Client
 ====================
 This is an OCaml client for [Seagate's Kinetic drives](https://developers.seagate.com/display/KV/Kinetic+Open+Storage+Documentation+Wiki).
-Currently, it uses protocol version 3.1.0.
+Currently, it uses protocol version 3.1.1.
 
 
 Installation

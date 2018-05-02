@@ -24,7 +24,10 @@ module Config: sig
       (* are in protocol definition but device doesn't send them *)
       max_operation_count_per_batch: int option;
       (* max_batch_count_per_device: int; *)
+      max_batch_size: int option;
+      max_deletes_per_batch : int option;
       timeout : float;
+
     }
   (*
 
@@ -45,6 +48,13 @@ type key = bytes
 type version = bytes option
 type timeout_ms = int64
 
+type priority = [
+  | `normal
+  | `lowest
+  | `lower
+  | `higher
+  | `highest
+  ]
 
 module Tag : sig
   type t =
@@ -97,6 +107,7 @@ module Error : sig
     | KineticError of int * msg
     | Generic of string * int * msg (* file, line, msg *)
     | Timeout of float * msg        (* delta_t, msg *)
+    | Assert of msg 
 
   val show : t -> string
 end
@@ -164,8 +175,7 @@ module Make(I:INTEGRATION) : sig
    *)
 
   val put:
-    ?timeout:timeout_ms ->
-    client ->
+    ?timeout:timeout_ms -> ?priority:priority -> client ->
     key -> I.value slice
     -> db_version:version
     -> new_version:version
@@ -180,29 +190,35 @@ module Make(I:INTEGRATION) : sig
         forced updates happen regardless the db_version
    *)
 
-  val delete_forced: ?timeout:timeout_ms -> client -> key -> unit result
+  val delete_forced:
+    ?timeout:timeout_ms -> ?priority:priority -> client ->
+    key -> unit result
 
-  val get : ?timeout:timeout_ms -> client -> key -> (I.value * version) option result
+  val get :
+    ?timeout:timeout_ms -> ?priority:priority -> client ->
+    key -> (I.value * version) option result
 
-  val noop: ?timeout:timeout_ms -> client -> unit result
+  val noop: ?timeout:timeout_ms -> ?priority:priority -> client -> unit result
 
   val instant_secure_erase: ?pin:string -> client -> unit result
 
   val download_firmware: client -> I.value slice -> unit result
 
-  val get_key_range: ?timeout:timeout_ms -> client ->
-                     key -> bool ->
-                     key -> bool ->
-                     bool -> int ->
-                     key list result
+  val get_key_range:
+    ?timeout:timeout_ms -> ?priority:priority -> client ->
+    key -> bool ->
+    (key * bool) option ->
+    bool -> int ->
+    key list result
 
   
-  val get_capacities : client -> (int64 * float) result
+  val get_capacities : ?timeout:timeout_ms -> ?priority:priority -> client -> (int64 * float) result
   (** returns capacity of the drive and portion full
    *)
 
   
-  val start_batch_operation : ?timeout:timeout_ms -> client -> batch Lwt.t
+  val start_batch_operation :
+    ?timeout:timeout_ms -> ?priority:priority -> client -> batch Lwt.t
   (**
      Batches are atomic multi-updates.
      Remark:

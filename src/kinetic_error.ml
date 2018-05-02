@@ -10,6 +10,7 @@ module Error = struct
   type t =
     | KineticError of int * msg
     | Generic of string * int * msg
-    | Timeout of float * msg [@@deriving show { with_path = false }]
+    | Timeout of float * msg
+    | Assert of msg [@@deriving show { with_path = false }]
 
 end
