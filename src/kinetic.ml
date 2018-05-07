@@ -269,7 +269,7 @@ struct
     let success = ref true in
     let rec loop (go:bool ref) (socket:I.socket) =
       let size = Hashtbl.length handlers in
-      if size > 0 || !go
+      if size > 0 && !go
       then
         begin
           Lwt_log.debug ~section "waiting for msg" >>= fun () ->
@@ -351,9 +351,11 @@ struct
          >>= fun ()->
          let rci = status_code2i `internal_error in
          let rc_bad = Nok (rci, Error.show e) in
-         Hashtbl.iter (fun k h ->
-                       Lwt.ignore_result (h rc_bad);
-                      ) handlers;
+         Hashtbl.iter
+           (fun k h ->
+             Lwt.ignore_result (h rc_bad);
+           ) handlers;
+         Hashtbl.clear handlers;
          Lwt.return_unit
     in
     let () = Lwt.ignore_result t
