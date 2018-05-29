@@ -149,14 +149,7 @@ module Make(I:INTEGRATION) : sig
     | FLUSH
 
 
-
-  type rc
-              
-  val convert_rc : rc -> (int * bytes) option
-
   val get_config : session -> Config.t
-
-
 
   val make_sha1  : I.value slice -> Tag.t
   val make_crc32 : I.value slice -> Tag.t
@@ -216,21 +209,14 @@ module Make(I:INTEGRATION) : sig
   (** returns capacity of the drive and portion full
    *)
 
-  
-  val start_batch_operation :
-    ?timeout:timeout_ms -> ?priority:priority -> client -> batch Lwt.t
-  (**
-     Batches are atomic multi-updates.
-     Remark:
-     - while you're doing a batch, you're not supposed to use the client
-       for other things
-   *)
+  type forced = bool option
 
-  val batch_put  :  batch -> Entry.t -> forced:bool option -> unit result
+  type batch_operation =
+    | BPut of Entry.t * forced
+    | BDel of Entry.t * forced
 
-  val batch_delete: batch -> Entry.t -> forced:bool option -> unit result
-
-  val end_batch_operation : batch -> I.socket result
+  val do_batch :
+    ?timeout:timeout_ms -> ?priority:priority -> client -> batch_operation list -> unit result
 
   (* (* we might need it again in the future *)
     val p2p_push : session -> connection ->

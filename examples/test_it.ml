@@ -124,7 +124,6 @@ let test_noop client =
 
 
 let batch_single_put client =
-  K.start_batch_operation client >>= fun batch ->
   let v = "ZZZ" in
   let v_slice = v, 0 , Bytes.length v in
   let tag = K.make_sha1 v_slice in
@@ -134,12 +133,10 @@ let batch_single_put client =
              ~new_version:(Some "ZZZ")
              (Some (v_slice,tag))
   in
-  K.batch_put batch pe ~forced:(Some true) >>=? fun () ->
-  K.end_batch_operation batch >>=? fun conn ->
+  K.do_batch client [BPut (pe,Some true)]  >>=? fun () ->
   Lwt_result.return ()
 
 let batch_test_put_delete client =
-  K.start_batch_operation client >>= fun batch ->
   let v = "XXX" in
   let v_slice = v,0,Bytes.length v in
   let tag = K.make_sha1 v_slice in
@@ -149,20 +146,15 @@ let batch_test_put_delete client =
              ~new_version:None
              (Some (v_slice, tag))
   in
-  K.batch_put batch pe  ~forced:(Some true) >>=? fun () ->
   let de = K.Entry.make
              ~key:"xxx"
              ~db_version:None
              ~new_version: None
              None
   in
-  K.batch_delete batch de ~forced:(Some true) >>=? fun () ->
-  K.end_batch_operation batch >>=? fun conn ->
-  Lwt_result.return ()
-
+  K.do_batch client [BPut (pe, Some true);BDel (de, Some true)] 
 
 let batch_delete_non_existing client =
-  K.start_batch_operation client >>= fun batch ->
   let de =
     K.Entry.make
       ~key:"I do not exist"
@@ -170,14 +162,10 @@ let batch_delete_non_existing client =
       ~new_version:None
       None
   in
-  K.batch_delete batch de ~forced:(Some true) >>=? fun () ->
-  Lwt_log.debug_f "delete sent" >>= fun () ->
-  K.end_batch_operation batch >>=? fun conn ->
-  Lwt_log.debug_f "end_batch sent" >>= fun () ->
-  Lwt_result.return ()
+  K.do_batch client [BDel (de, Some true)]
 
 
-let _add_put batch key v =
+let _make_batch_put key v =
   let v_slice = v,0,Bytes.length v in
   let pe =
     let tag = K.make_sha1 v_slice in
@@ -187,20 +175,13 @@ let _add_put batch key v =
       ~new_version:None
       (Some (v_slice, tag))
   in
-  K.batch_put batch pe ~forced:(Some true)
+  K.BPut (pe, Some true)
+
 
 
 let batch_3_puts client =
-  K.start_batch_operation client >>= fun batch ->
   let make_key i = Printf.sprintf "batch_test_3_puts:key_%03i" i in
-  let key0 = make_key 0 in
-  let key1 = make_key 1 in
-  let key2 = make_key 2 in
-  _add_put batch key0 key0 >>=? fun () ->
-  _add_put batch key1 key1 >>=? fun () ->
-  _add_put batch key2 key2 >>=? fun () ->
-  K.end_batch_operation batch >>=? fun conn ->
-  Lwt_result.return ()
+  K.do_batch client (List.map (fun k -> let k' = make_key k in _make_batch_put k' k') [0;1;2])
 
 
 let batch_too_fat client =
@@ -216,19 +197,17 @@ let batch_too_fat client =
      begin
        let make_key i = Printf.sprintf "batch_too_fat:key_%03i" i in
        let n = max + 5 in
-       let rec loop batch i =
+       let rec loop operations i =
          if i = n
-         then Lwt_result.return ()
+         then List.rev operations 
          else
            begin
              let key = make_key 0 in
-             _add_put batch key key >>=? fun () ->
-             loop batch (i+1)
+             let operations' = (_make_batch_put key key)::operations in
+             loop operations' (i+1)
            end
        in
-       K.start_batch_operation client >>= fun batch ->
-       loop batch 0 >>=? fun () ->
-       K.end_batch_operation batch
+       K.do_batch client (loop [] 0)
        >>= function
        | Result.Ok _   -> assert false (* It should fail !*)
        | Result.Error (Error.KineticError(21, msg) as e) -> (* needs to be 21 = too many operations in a batch *)

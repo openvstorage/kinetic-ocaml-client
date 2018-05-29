@@ -156,9 +156,10 @@ let _assert_both m command typ code =
              end
          end
        else
-         let msg = htyp |>
-               message_type2s |>
-                     Printf.sprintf "unexpected type: %s"
+         let msg =
+           htyp
+           |> message_type2s
+           |> Printf.sprintf "unexpected type: %s"
          in
          let e = Error.Generic(__FILE__,__LINE__, msg) in
          Lwt_result.fail e
@@ -224,166 +225,19 @@ include Kinetic_integration
 module Batch(I:INTEGRATION) =
 struct
 
-  type rc = | Ok | Nok of int * bytes
-
-  type handler = rc -> unit Lwt.t
-
-  type t = { mvar :  bool Lwt_mvar.t;
-             handlers : (command_message_type,
-                         rc -> unit Lwt.t) Hashtbl.t;
-             socket : I.socket;
+  type t = { socket : I.socket;
              batch_id : int32;
-             go : bool ref;
              session : Session.t;
              mutable count : int;
-             mutable error : Error.t option;
            }
 
-  let find t h =
-    try Some (Hashtbl.find t h)
-    with Not_found -> None
-
-  let failed t e =
-    let () = match t.error with
-    | None -> t.error <- Some e
-    | Some _ -> ()
-    in
-    t.go := false;
-    Lwt_mvar.put t.mvar false
-
-  let remove t h = Hashtbl.remove t h
-
   let make session (socket:I.socket) batch_id =
-    let timeout =
-      let cfg = session.Session.config in
-      cfg.timeout
-    in
-    let handlers = Hashtbl.create 5 in
-    let mvar = Lwt_mvar.create_empty () in
-    let go = ref true in
-
-    let batch =
-      { mvar  ; handlers ; socket; batch_id; go = go;
-        session; count = 0; error = None }
-    in
-    let success = ref true in
-    let rec loop (go:bool ref) (socket:I.socket) =
-      let size = Hashtbl.length handlers in
-      if size > 0 && !go
-      then
-        begin
-          Lwt_log.debug ~section "waiting for msg" >>= fun () ->
-          network_receive_generic
-            ~timeout I.create I.read I.read_bytes socket I.show_socket session.Session.trace
-          >>=? fun (m,vo, proto_raw) ->
-          Lwt_log.debug ~section "got msg" >>= fun () ->
-          let auth_type = _get_message_auth_type (m:Message.t) in
-          let command = _parse_command m in
-          begin
-            match auth_type with
-            | `hmacauth ->
-               begin
-                 let typ =
-                   try _get_message_type command
-                   with
-                   | exn ->
-                      let () = Lwt_log.ign_info_f "no type for: %s" (to_hex proto_raw) in
-                      raise exn
-                 in
-                 let typs = message_type2s typ in
-                 begin
-                   match find handlers typ with
-                   | None ->
-                      Lwt_log.info_f ~section "\tignoring: %s" typs
-                   | Some h ->
-                      Lwt_log.debug_f ~section "found handler for: %s" typs
-                      >>= fun () ->
-                      let () = remove handlers typ in
-                      let status = _get_status command in
-                      let ccode = _get_status_code status in
-                      let rc =
-                        match ccode with
-                        | `success -> Ok
-                        | _ ->
-                           let sm = _get_status_message status in
-                           let dsm = _get_detailed_status_message status in
-                           Lwt_log.ign_debug_f ~section
-                             "dsm:%S" dsm;
-                           let (rci:int) = status_code2i ccode in
-                           Nok (rci, sm)
-                      in
-                      Lwt.catch
-                        (fun () ->h rc)
-                        (fun exn -> go:= false;
-                                    success := false;
-                                    Lwt.return_unit)
-                 end
-               end
-            | `unsolicitedstatus ->
-               begin
-                 let () = Lwt_log.ign_info_f "unsolicitedstatus: %s" (to_hex proto_raw) in
-                 let status = _get_status command in
-                 let ccode = _get_status_code status in
-                 let sm = _get_status_message status in
-                 let rci = status_code2i ccode in
-                 batch.error <- Some (KineticError(rci,sm)) ;
-                 go := false;
-                 Lwt.return_unit
-               end
-            | `pinauth | `invalid_auth_type -> assert false
-          end
-          >>= fun ()->
-          loop go socket
-        end
-      else
-        begin
-          Lwt_mvar.put mvar !success >>= fun () ->
-          Lwt_log.debug_f ~section "loop ends here (success:%b)" !success >>= fun () ->
-          Lwt_result.return ()
-        end
-    in
-    let t =
-      loop go socket
-      >>= function
-      | Result.Ok ()   -> Lwt.return_unit
-      | Result.Error e ->
-         Lwt_log.debug_f ~section "batch loop for %li failed:%s" batch_id (Error.show e)
-         >>= fun ()->
-         let rci = status_code2i `internal_error in
-         let rc_bad = Nok (rci, Error.show e) in
-         Hashtbl.iter
-           (fun k h ->
-             Lwt.ignore_result (h rc_bad);
-           ) handlers;
-         Hashtbl.clear handlers;
-         Lwt.return_unit
-    in
-    let () = Lwt.ignore_result t
-    in batch
+    let batch = { socket; batch_id; session; count = 0} in
+    batch
 
 
   let inc_count t = t.count <- t.count + 1
 
-  let add_handler t typ h =
-    let typs = message_type2s typ in
-    Lwt_log.debug_f ~section "add handler for: %s" typs >>= fun () ->
-    Hashtbl.add t.handlers typ h;
-    Lwt.return_unit
-
-  let close t =
-    Lwt_log.debug ~section "closing batch" >>= fun () ->
-    t.go := false;
-    Lwt_mvar.take  t.mvar
-    >>= function
-    | true  -> Lwt_result.return ()
-    | false ->
-       begin
-         match t.error with
-         | None -> assert false (* TODO: This is a sign *)
-         | Some e ->
-            Lwt_log.debug_f "closing with error: %s" (Error.show e) >>= fun () ->
-            Lwt_result.fail e
-       end
 end
 
   
@@ -432,17 +286,6 @@ module Make(I:INTEGRATION) = struct
       |WRITEBACK
       |FLUSH
     
-
-    type rc = B.rc
-
-    let convert_rc = function
-      | B.Ok -> None
-      | B.Nok(i,m) -> Some (i,m)
-
-
-
-    type handler = B.handler
-
     type version = bytes option
 
     type closer = unit -> unit Lwt.t
@@ -1035,16 +878,6 @@ module Make(I:INTEGRATION) = struct
            let e = Error.KineticError(code, sm) in
            Lwt_result.fail e
 
-  let default_handler batch rc =
-    let open B in
-    match rc with
-    | Ok        ->
-       Lwt_log.debug  ~section "default_handler:Ok"
-    | Nok(i,sm) ->
-       Lwt_log.info_f ~section "default_handler:NOK!: rc:%i; sm=%S"  i sm >>= fun () ->
-       let e = Error.KineticError (i,sm) in
-       B.failed batch e 
-
   let start_batch_operation
         ?timeout ?priority client =
     _assert_open client >>= fun () ->
@@ -1057,11 +890,6 @@ module Make(I:INTEGRATION) = struct
     let msg = make_start_batch ?timeout ?priority session batch_id in
     network_send_generic I.write I.write_bytes socket msg None I.show_socket session.Session.trace >>= fun () ->
     let batch = B.make session socket batch_id in
-    B.add_handler
-      batch
-      `start_batch_response
-      (default_handler batch)
-    >>= fun () ->
     Session.incr_sequence session;
     Session.batch_on session;
     Lwt.return batch
@@ -1071,23 +899,13 @@ module Make(I:INTEGRATION) = struct
     Lwt_log.debug_f ~section "end_batch_operation" >>= fun () ->
     let open B in
     let msg = make_end_batch batch in
-    B.add_handler batch `end_batch_response (default_handler batch) >>= fun () ->
     let socket = batch.socket in
     let session = batch.session in
     let trace = session.Session.trace in
     network_send_generic I.write I.write_bytes socket msg None I.show_socket trace >>= fun () ->
-
-    let () = Session.incr_sequence session in
-    B.close batch
-    >>= fun r ->
     Session.incr_sequence session;
     Session.batch_off session;
-    match r with
-    | Ok () -> Lwt_result.return batch.socket
-    | Error e -> Lwt_result.fail e
-
-
-
+    Lwt.return ()
 
   let make_batch_msg session
                      batch_id
@@ -1133,19 +951,10 @@ module Make(I:INTEGRATION) = struct
       let proto_raw = Piqirun.to_string(gen_message m) in
       proto_raw
 
-  let _assert_batch batch =
-    Lwt_log.debug_f "_assert_batch" >>= fun () ->
-    match batch.B.error with
-    | None   -> Lwt_result.return ()
-    | Some e ->
-       (* client.closed <- true; *)
-       Lwt_result.fail e
-
   let batch_put
         (batch:B.t) entry
         ~forced
     =
-    _assert_batch batch >>=? fun () ->
     Lwt_log.debug_f ~section "batch_put %s" (Entry.show entry) >>= fun () ->
     let open Entry in
     begin
@@ -1177,7 +986,6 @@ module Make(I:INTEGRATION) = struct
         entry
         ~forced
     =
-    _assert_batch batch >>=? fun () ->
     let open B in
     let msg = make_batch_msg batch.session
                              batch.batch_id
@@ -1193,6 +1001,82 @@ module Make(I:INTEGRATION) = struct
     Session.incr_sequence session;
     Lwt_result.return ()
 
+  type forced = bool option
+  type batch_operation =
+    |BPut of Entry.t * forced
+    |BDel of Entry.t * forced
+           
+  let do_batch ?(timeout:int64 option) ?priority client operations =
+    _assert_open client >>= fun () ->
+    start_batch_operation ?timeout ?priority client >>= fun batch ->
+
+    let do_operation = function
+      | BPut (pe, forced) -> batch_put    batch pe ~forced
+      | BDel (de, forced) -> batch_delete batch de ~forced 
+    in
+    let rec loop cnt = function
+      | [] -> Lwt_result.return cnt
+      | op:: ops ->
+         do_operation op >>=? fun () ->
+         loop (cnt + 1) ops
+    in
+    loop 0 operations >>=? fun cnt ->
+    end_batch_operation batch >>= fun () ->
+
+    let session = client.session in
+    let rec epilogue cnt =
+      let read_msg socket =
+        let timeout = session.config.timeout in
+        network_receive_generic ~timeout I.create I.read I.read_bytes socket I.show_socket session.Session.trace
+        >>=? fun (m, vo, proto_raw) ->
+        Lwt_log.debug ~section "got msg" >>= fun () ->
+        let auth_type = _get_message_auth_type (m:Message.t) in
+        let command = _parse_command m in
+        begin
+          match auth_type with
+          | `pinauth | `invalid_auth_type -> Error.Generic(__FILE__,__LINE__, "bad auth type: " ^ to_hex (proto_raw)) |> Lwt_result.fail 
+          | `unsolicitedstatus ->
+             begin
+               let () = Lwt_log.ign_info_f "unsolicitedstatus: %s" (to_hex proto_raw) in
+               let status = _get_status command in
+               let ccode = _get_status_code status in
+               let sm = _get_status_message status in
+               let rci = status_code2i ccode in
+               Lwt_result.fail (Error.KineticError(rci,sm))
+             end
+          | `hmacauth ->
+             begin
+               begin
+               try _get_message_type command |> Lwt_result.return
+                 with
+                 | exn ->
+                    Error.Generic(__FILE__, __LINE__, "no type for: " ^ (to_hex proto_raw)) |> Lwt_result.fail
+               end
+               >>=? fun typ ->
+               let typs = message_type2s typ in
+               Lwt_log.debug_f "typs:%s" typs >>= fun () ->
+               let status = _get_status command in
+               let ccode = _get_status_code status in
+               match ccode with
+               | `success -> Lwt_result.return ()
+               | _ ->
+                  let sm = _get_status_message status in
+                  let dsm = _get_detailed_status_message status in
+                  Lwt_log.ign_debug_f ~section
+                    "dsm:%S" dsm;
+                  let (rci:int) = status_code2i ccode in
+                  Error.KineticError(rci,sm) |> Lwt_result.fail
+             end
+        end
+      in 
+      if cnt = 0
+      then Lwt_result.return ()
+      else
+        Lwt_log.debug_f "count = %i" cnt >>= fun () ->
+        read_msg batch.socket >>=? fun() ->
+        epilogue (cnt -1)
+    in
+    epilogue 2
 
   let make_noop ?timeout ?priority session =
     let mb = set_attributes ~ko:None
