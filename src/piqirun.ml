@@ -1,5 +1,5 @@
 (*
-   Copyright 2009, 2010, 2011, 2012, 2013 Anton Lavrik
+   Copyright 2009, 2010, 2011, 2012, 2013, 2014, 2015 Anton Lavrik
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -57,6 +57,58 @@ type string_slice =
     len :int;
     mutable pos : int;
   }
+
+
+(* the below alternative tail-recursive implementation of stdlib's List.map is
+ * copied from Core (https://github.com/janestreet/core_kernel)
+ *
+ * note that the order of arguments was changed back to match the one of
+ * stdlib's
+ *)
+
+let list_map_slow f l = List.rev (List.rev_map f l)
+
+let rec list_count_map f l ctr =
+  match l with
+  | [] -> []
+  | [x1] ->
+    let f1 = f x1 in
+    [f1]
+  | [x1; x2] ->
+    let f1 = f x1 in
+    let f2 = f x2 in
+    [f1; f2]
+  | [x1; x2; x3] ->
+    let f1 = f x1 in
+    let f2 = f x2 in
+    let f3 = f x3 in
+    [f1; f2; f3]
+  | [x1; x2; x3; x4] ->
+    let f1 = f x1 in
+    let f2 = f x2 in
+    let f3 = f x3 in
+    let f4 = f x4 in
+    [f1; f2; f3; f4]
+  | x1 :: x2 :: x3 :: x4 :: x5 :: tl ->
+    let f1 = f x1 in
+    let f2 = f x2 in
+    let f3 = f x3 in
+    let f4 = f x4 in
+    let f5 = f x5 in
+    f1 :: f2 :: f3 :: f4 :: f5 ::
+      (if ctr > 1000
+        then list_map_slow f tl
+        else list_count_map f tl (ctr + 1))
+
+let list_map f l = list_count_map f l 0
+
+
+module List =
+  struct
+    include List
+
+    let map = list_map
+  end
 
 
 module IBuf =
@@ -150,11 +202,11 @@ module IBuf =
               res
         | Channel x ->
             let start_pos = pos_in x in
-            let s = String.create length in
+            let s = Bytes.create length in
             (try Pervasives.really_input x s 0 length
              with End_of_file -> raise End_of_buffer
             );
-            of_string s start_pos
+            of_string (Bytes.unsafe_to_string s) start_pos
 
 
     let of_string x =
@@ -258,7 +310,7 @@ let try_parse_varint buf =
 
 
 (* TODO, XXX: check signed overflow *)
-(* TODO: optimize for little-endian achitecture *)
+(* TODO: optimize for little-endian architecture *)
 let parse_fixed32 buf =
   try
     let res = ref 0l in
@@ -746,7 +798,7 @@ let parse_default binobj =
   buf
 
 
-(* XXX, NOTE: using default with requried or optional-default fields *)
+(* XXX, NOTE: using default with required or optional-default fields *)
 let parse_required_field code parse_value ?default l =
   let res, rem = find_field code l in
   match res with
@@ -870,16 +922,6 @@ let parse_packed_repeated_array32_field code parse_packed_value parse_value l =
 
 let parse_packed_repeated_array64_field code parse_packed_value parse_value l =
   parse_packed_repeated_array_fixed_field 8 code parse_packed_value parse_value l
-
-
-let parse_flag code l =
-  let res, rem = find_field code l in
-  match res with
-    | None -> false, l
-    | Some x ->
-        (match parse_bool_field x with
-          | true -> true, rem
-          | false -> error x "invalid encoding for a flag")
 
 
 let parse_list_elem parse_value (code, x) =
@@ -1143,27 +1185,27 @@ let gen_varint64_field code x =
  *)
 
 let gen_fixed32_value x = (* little-endian *)
-  let s = String.create 4 in
+  let s = Bytes.create 4 in
   let x = ref x in
   for i = 0 to 3
   do
     let b = Char.chr (Int32.to_int (Int32.logand !x 0xFFl)) in
-    s.[i] <- b;
+    Bytes.set s i b;
     x := Int32.shift_right_logical !x 8
   done;
-  ios s
+  ios (Bytes.unsafe_to_string s)
 
 
 let gen_fixed64_value x = (* little-endian *)
-  let s = String.create 8 in
+  let s = Bytes.create 8 in
   let x = ref x in
   for i = 0 to 7
   do
     let b = Char.chr (Int64.to_int (Int64.logand !x 0xFFL)) in
-    s.[i] <- b;
+    Bytes.set s i b;
     x := Int64.shift_right_logical !x 8
   done;
-  ios s
+  ios (Bytes.unsafe_to_string s)
 
 
 let gen_fixed32_field code x =
@@ -1441,12 +1483,6 @@ let gen_packed_repeated_array64_field code f l =
   let size = 8 * Array.length l in
   let contents = iol_known_size size (map_a2l f l) in
   gen_packed_repeated_field_common code contents
-
-
-let gen_flag code x =
-  match x with
-    | false -> iol [] (* no flag *)
-    | true -> gen_bool_field code true
 
 
 let gen_record code contents =
