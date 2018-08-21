@@ -439,55 +439,55 @@ module Make(I:INTEGRATION) = struct
       | _ -> Lwt_result.return ()
 
 
-  let make_serialized_msg ?timeout ?priority session mt body_manip =
-    let open Message_hmacauth in
+    let make_header ~session ~message_type ?timeout ?priority ?batch_id ?ack_sequence () =
+      let h = default_command_header () in
+      let open Session in
+      let () = h.cluster_version <- Some session.cluster_version in
+      let () = h.connection_id <- Some session.connection_id in
+      let () = h.sequence <- Some session.sequence in
+      let () = h.timeout <- timeout in
+      let () = h.message_type <- Some message_type in
+      let () = h.batch_id <- batch_id in
+      let () = h.ack_sequence <- ack_sequence in
+      h
+
+    let make_body () =
+      let b = default_command_body () in
+      b
+
+    let make_serialized_msg ?timeout ?priority session message_type ~body =
+      let open Message_hmacauth in
+      let open Session in
+
+      let header = make_header ~session ~message_type ?timeout ?priority () in
+
+      let command = default_command () in
+      let () = command.header <- Some header in
+
+      let () = command.body <- Some body in
+      let m = default_message () in
+
+      let command_bytes = Piqirun.to_string(gen_command command) in
+      m.command_bytes <- Some command_bytes;
+      let hmac = calculate_hmac session.secret command_bytes in
+      let hmac_auth = default_message_hmacauth() in
+      hmac_auth.identity <- Some session.identity;
+      hmac_auth.hmac <- Some hmac;
+      m.auth_type <- Some `hmacauth;
+      m.hmac_auth <- Some hmac_auth;
+      let proto_raw = Piqirun.to_string(gen_message m) in
+      proto_raw
+
+  let make_pin_auth_serialized_msg session (pin:string) message_type ~body =
+
     let open Session in
+
+    let header = make_header ~session ~message_type () in
     let command = default_command () in
-    let header = default_command_header () in
-    let () = header.cluster_version <- Some session.cluster_version in
-    let () = header.connection_id <- Some session.connection_id in
-    let () = header.sequence <- Some session.sequence in
-    let () = header.timeout <- timeout in
-    let () = header.priority <- priority in
     let () = command.header <- Some header in
 
-    let body = default_command_body () in
-    let () = body_manip body in
     let () = command.body <- Some body in
     let m = default_message () in
-
-    let () = header.message_type <- Some mt in
-
-
-    let command_bytes = Piqirun.to_string(gen_command command) in
-    m.command_bytes <- Some command_bytes;
-    let hmac = calculate_hmac session.secret command_bytes in
-    let hmac_auth = default_message_hmacauth() in
-    hmac_auth.identity <- Some session.identity;
-    hmac_auth.hmac <- Some hmac;
-    m.auth_type <- Some `hmacauth;
-    m.hmac_auth <- Some hmac_auth;
-    let proto_raw = Piqirun.to_string(gen_message m) in
-    proto_raw
-
-  let make_pin_auth_serialized_msg session (pin:string) mt body_manip =
-
-    let open Session in
-    let command = default_command () in
-    let header = default_command_header () in
-    let () = header.cluster_version <- Some session.cluster_version in
-    let () = header.connection_id <- Some session.connection_id in
-    let () = header.sequence <- Some session.sequence in
-
-    let () = command.header <- Some header in
-
-    let body = default_command_body () in
-    let () = body_manip body in
-    let () = command.body <- Some body in
-    let m = default_message () in
-
-    let () = header.message_type <- Some mt in
-
 
     let command_bytes = Piqirun.to_string(gen_command command) in
     m.command_bytes <- Some command_bytes;
@@ -499,15 +499,16 @@ module Make(I:INTEGRATION) = struct
     let proto_raw = Piqirun.to_string(gen_message m) in
     proto_raw
 
-  let set_attributes ~ko
-                     ~db_version
-                     ~new_version
-                     ~forced
-                     ~synchronization
-                     ~maybe_tag
-                     (body:Command_body.t)
+  let body_with_attributes
+        ~ko
+        ~db_version
+        ~new_version
+        ~forced
+        ~synchronization
+        ~maybe_tag
     =
     let open Command_key_value in
+
     let kv = default_command_key_value() in
     kv.key <- ko;
     kv.force <- forced;
@@ -535,6 +536,7 @@ module Make(I:INTEGRATION) = struct
             kv.tag <- Some s
        end
     in
+    let body = make_body () in
     body.key_value <- Some kv;
     let translate = function
       | WRITETHROUGH -> `writethrough
@@ -543,17 +545,19 @@ module Make(I:INTEGRATION) = struct
     in
     let sync = map_option translate synchronization in
     kv.synchronization <- sync;
-    ()
+    body
 
   let make_delete_forced ?timeout ?priority client key =
-    let mb = set_attributes ~ko:(Some key)
-                            ~db_version:None
-                            ~new_version:None
-                            ~forced:(Some true)
-                            ~maybe_tag:None
-                            ~synchronization:(Some WRITEBACK)
+    let body =
+      body_with_attributes
+        ~ko:(Some key)
+        ~db_version:None
+        ~new_version:None
+        ~forced:(Some true)
+        ~maybe_tag:None
+        ~synchronization:(Some WRITEBACK)
     in
-    make_serialized_msg ?timeout ?priority client.session `delete mb
+    make_serialized_msg ?timeout ?priority client.session `delete ~body
 
   let make_put
         ?timeout ?priority client
@@ -562,8 +566,8 @@ module Make(I:INTEGRATION) = struct
         ~forced ~synchronization
         ~tag
     =
-    let mb =
-      set_attributes
+    let body =
+      body_with_attributes
         ~ko:(Some key)
         ~db_version
         ~new_version
@@ -571,39 +575,28 @@ module Make(I:INTEGRATION) = struct
         ~synchronization
         ~maybe_tag:tag
     in
-    make_serialized_msg ?timeout ?priority client.session `put mb
+    make_serialized_msg ?timeout ?priority client.session `put ~body
 
-  let _no_manip _ = ()
+  
 
   let make_flush ?timeout ?priority session =
-    make_serialized_msg ?timeout ?priority session `flushalldata _no_manip
+    let body = make_body () in
+    make_serialized_msg ?timeout ?priority session `flushalldata ~body
 
   let make_batch_message
         ?timeout
         ?priority
-        ?(body_manip = _no_manip)
-        session mt batch_id =
+        ~body
+        session message_type batch_id =
     let open Message_hmacauth in
     let open Session in
     let command = default_command () in
-    let header = default_command_header () in
-    header.cluster_version <- Some session.cluster_version;
-    header.connection_id <- Some session.connection_id;
-    header.sequence <- Some session.sequence;
-    header.batch_id <- Some batch_id;
-    header.timeout <- timeout;
-    header.priority <- priority;
+    let header = make_header ~session ~message_type ?timeout ?priority ~batch_id () in
     let () = command.header <- Some header in
-
-    let body = default_command_body () in
-
-    let () = body_manip body in
 
     let () = command.body <- Some body in
 
     let m = default_message () in
-
-    let () = header.message_type <- Some mt in
 
     let command_bytes = Piqirun.to_string(gen_command command) in
     m.command_bytes <- Some command_bytes;
@@ -622,17 +615,16 @@ module Make(I:INTEGRATION) = struct
 
   let make_end_batch (b:B.t) =
     let open B in
-    let body_manip body =
-      let batch = default_command_batch () in
-      let count = b.count in
-      let open Command_batch in
-      batch.count <- Some (Int32.of_int count);
-      body.batch <- Some batch
-    in
-    make_batch_message b.session `end_batch b.batch_id ~body_manip
 
-  let make_abort_batch session batch_id =
-    make_batch_message session `abort_batch batch_id
+    let batch = default_command_batch () in
+    let count = b.count in
+    let open Command_batch in
+    batch.count <- Some (Int32.of_int count);
+    let body = make_body () in
+    body.batch <- Some batch;
+
+    make_batch_message ~body b.session `end_batch b.batch_id 
+
 
   let tracing (session:Session.t) t =
     session.Session.trace <- t
@@ -710,14 +702,14 @@ module Make(I:INTEGRATION) = struct
 
 
   let make_get ?timeout ?priority session key =
-    let mb = set_attributes ~ko:(Some key)
-                            ~db_version:None
-                            ~new_version:None
-                            ~forced:None
-                            ~synchronization:None
-                            ~maybe_tag:None
+    let body = body_with_attributes ~ko:(Some key)
+                 ~db_version:None
+                 ~new_version:None
+                 ~forced:None
+                 ~synchronization:None
+                 ~maybe_tag:None
     in
-    make_serialized_msg ?timeout ?priority session `get mb
+    make_serialized_msg ?timeout ?priority session `get ~body
 
   let get ?timeout ?priority client k =
     _assert_open client >>= fun () ->
@@ -769,13 +761,13 @@ module Make(I:INTEGRATION) = struct
     | CAPACITIES -> `capacities
 
   let make_getlog ?timeout ?priority session capacities =
-    let mb body =
-      let getlog = default_command_get_log () in
-      let open Command_get_log in
-      getlog.types <- List.map translate_log_type capacities;
-      body.get_log <- Some getlog
-    in
-    make_serialized_msg ?timeout ?priority session `getlog mb
+    let getlog = default_command_get_log () in
+    let open Command_get_log in
+    getlog.types <- List.map translate_log_type capacities;
+    let body = make_body () in
+    body.get_log <- Some getlog;
+
+    make_serialized_msg ?timeout ?priority session `getlog ~body
 
   let get_capacities ?timeout ?priority client =
     _assert_open client >>= fun () ->
@@ -805,7 +797,7 @@ module Make(I:INTEGRATION) = struct
        let e = Error.KineticError(code,sm) in
        Lwt_result.fail e
 
-  let set_kr start_key sinc maybe_end_key reverse_results max_results body =
+  let body_with_kr start_key sinc maybe_end_key reverse_results max_results =
     let open Command_range in
     let range = default_command_range () in
     range.start_key <- Some start_key;
@@ -821,8 +813,10 @@ module Make(I:INTEGRATION) = struct
     range.reverse <- Some reverse_results;
     let max32 = Int32.of_int max_results in
     range.max_returned <- Some max32;
+
+    let body = make_body () in
     body.range <- Some range;
-    ()
+    body
 
   let make_get_key_range
         ?timeout ?priority session
@@ -830,13 +824,13 @@ module Make(I:INTEGRATION) = struct
         maybe_end_key
         reverse_results
         max_results =
-      let manip = set_kr
-                    start_key sinc
-                    maybe_end_key
-                    reverse_results
-                    max_results
+      let body = body_with_kr
+                   start_key sinc
+                   maybe_end_key
+                   reverse_results
+                   max_results
       in
-      make_serialized_msg ?timeout ?priority session `getkeyrange manip
+      make_serialized_msg ?timeout ?priority session `getkeyrange ~body
 
   let get_key_range_result (command : Command.t) =
     match command.body with
@@ -887,7 +881,8 @@ module Make(I:INTEGRATION) = struct
     let socket = client.socket in
     let batch_id = session.batch_id in
     let () = session.batch_id <- Int32.succ batch_id in
-    let msg = make_start_batch ?timeout ?priority session batch_id in
+    let body = make_body () in
+    let msg = make_start_batch ?timeout ?priority session batch_id ~body in
     network_send_generic I.write I.write_bytes socket msg None I.show_socket session.Session.trace >>= fun () ->
     let batch = B.make session socket batch_id in
     Session.incr_sequence session;
@@ -909,37 +904,30 @@ module Make(I:INTEGRATION) = struct
 
   let make_batch_msg session
                      batch_id
-                     mt
+                     message_type
                      entry
                      ~forced
       =
       let open Message_hmacauth in
       let open Session in
+      
+      let header = make_header ~session ~message_type ~batch_id ~ack_sequence:session.sequence () in
       let command = default_command () in
-      let header = default_command_header () in
-      header.cluster_version <- Some session.cluster_version;
-      header.connection_id <- Some session.connection_id;
-      header.sequence <- Some session.sequence;
-      header.ack_sequence <- Some session.sequence;
-
-      (* batch_id *)
-      header.batch_id <- Some batch_id;
-
       command.header <- Some header;
-      let body = default_command_body () in
+      
       let open Entry in
       let maybe_tag = map_option snd entry.vt in
       let synchronization = Some WRITETHROUGH in
-      set_attributes ~ko:(Some entry.key)
+      let body = body_with_attributes ~ko:(Some entry.key)
                      ~db_version:entry.db_version
                      ~new_version:entry.new_version
                      ~forced
                      ~synchronization
                      ~maybe_tag
-                     body;
+      in
       command.body <- Some body;
       let m = default_message () in
-      header.message_type <- Some mt;
+      
       let command_bytes = Piqirun.to_string(gen_command command) in
       m.command_bytes <- Some command_bytes;
       let hmac = calculate_hmac session.secret command_bytes in
@@ -1079,14 +1067,14 @@ module Make(I:INTEGRATION) = struct
     epilogue 2
 
   let make_noop ?timeout ?priority session =
-    let mb = set_attributes ~ko:None
+    let body = body_with_attributes ~ko:None
                             ~db_version:None
                             ~new_version:None
                             ~forced:None
                             ~synchronization:None
                             ~maybe_tag:None
     in
-    make_serialized_msg ?timeout ?priority session `noop mb
+    make_serialized_msg ?timeout ?priority session `noop ~body
 
   (*
 
@@ -1131,26 +1119,23 @@ module Make(I:INTEGRATION) = struct
 
   let make_instant_secure_erase session ~pin =
 
-    let manip body
-      =
-      let () =
-        set_attributes
-          ~ko:None
-          ~db_version:None
-          ~new_version:None
-          ~forced:None
-          ~synchronization:None
-          ~maybe_tag:None
-          body
-      in
-      let pinop = default_command_pin_operation  () in
-      let open Command_pin_operation in
-      let () = pinop.pin_op_type <- Some `secure_erase_pinop in
-      body.pin_op <- Some pinop
+
+    let pinop = default_command_pin_operation  () in
+    let open Command_pin_operation in
+    let () = pinop.pin_op_type <- Some `secure_erase_pinop in
+    let body =
+      body_with_attributes
+        ~ko:None
+        ~db_version:None
+        ~new_version:None
+        ~forced:None
+        ~synchronization:None
+        ~maybe_tag:None
     in
+    body.pin_op <- Some pinop;
     make_pin_auth_serialized_msg
       session
-      pin `pinop manip
+      pin `pinop ~body
 
   let instant_secure_erase ?pin client =
     _assert_open client >>= fun () ->
@@ -1188,14 +1173,15 @@ module Make(I:INTEGRATION) = struct
 
      *)
 
-    let manip body =
-      let open Command_setup in
-      let setup = default_command_setup () in
-      setup.firmware_download <- Some true;
-      body.setup <- Some setup
-    in
+    let open Command_setup in
+    let setup = default_command_setup () in
+    setup.firmware_download <- Some true;
+
+    let body = make_body () in
+    body.setup <- Some setup;
+
     make_serialized_msg
-      session `setup manip
+      session `setup ~body
 
 
   let download_firmware client slod_data_slice =
