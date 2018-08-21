@@ -7,6 +7,7 @@ true: package(lwt.unix)
 true: package(cryptokit)
 true: package(cmdliner)
 true: package(ppx_deriving.std)
+true: package(ocaml-protoc)
 
 "src":include
 "examples":include

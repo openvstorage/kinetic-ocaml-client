@@ -6,6 +6,8 @@
 open Cryptokit
 open Kinetic_util
 open Kinetic_network
+open Kinetic_types
+
 
 let calculate_hmac secret msg =
   let sx0 = Bytes.create 4 in
@@ -16,117 +18,110 @@ let calculate_hmac secret msg =
   h # result
 
 
-open Kinetic_piqi
-open Message
-open Command
-open Command_header
-open Command_body
-open Command_status
-
-let _assert_type (command:Command.t) typ =
+let _assert_type (command:command) typ =
   let header  = unwrap_option "header" command.header in
   let htyp    = unwrap_option "message type" header.message_type in
   assert (htyp = typ)
 
-let _get_status (command: Command.t) =
+let _get_status (command: command) =
   let status = unwrap_option "status" command.status in
   status
 
-let _get_status_code (status:Command_status.t) =
+let _get_status_code (status:command_status) =
   let code = unwrap_option "status.code" status.code in
   code
 
-let _get_status_message (status:Command_status.t) =
+let _get_status_message (status:command_status) =
   let msg = unwrap_option "status.message" status.status_message in
   msg
 
-let _get_detailed_status_message (status:Command_status.t) = get_option "None" status.detailed_message
+let _get_detailed_status_message (status:command_status) = get_option "None" status.detailed_message
 
 let status_code2i = function
-  | `invalid_status_code     -> -1
-  | `not_attempted           ->  0 (* p2p *)
-  | `success                 ->  1
-  | `hmac_failure            ->  2
-  | `not_authorized          ->  3
-  | `version_failure         ->  4
-  | `internal_error          ->  5
-  | `header_required         ->  6
-  | `not_found               ->  7
-  | `version_mismatch        ->  8
-  | `service_busy            ->  9
-  | `expired                 -> 10
-  | `data_error              -> 11
-  | `perm_data_error         -> 12
-  | `remote_connection_error -> 13
-  | `no_space                -> 14
-  | `no_such_hmac_algorithm  -> 15
-  | `invalid_request         -> 16
-  | `nested_operation_errors -> 17
-  | `device_locked           -> 18
-  | `device_already_unlocked -> 19
-  | `connection_terminated   -> 20
-  | `invalid_batch           -> 21 (* 3.0.6 *)
+  | Invalid_status_code     -> -1
+  | Not_attempted           ->  0 (* p2p *)
+  | Success                 ->  1
+  | Hmac_failure            ->  2
+  | Not_authorized          ->  3
+  | Version_failure         ->  4
+  | Internal_error          ->  5
+  | Header_required         ->  6
+  | Not_found               ->  7
+  | Version_mismatch        ->  8
+  | Service_busy            ->  9
+  | Expired                 -> 10
+  | Data_error              -> 11
+  | Perm_data_error         -> 12
+  | Remote_connection_error -> 13
+  | No_space                -> 14
+  | No_such_hmac_algorithm  -> 15
+  | Invalid_request         -> 16
+  | Nested_operation_errors -> 17
+  | Device_locked           -> 18
+  | Device_already_unlocked -> 19
+  | Connection_terminated   -> 20
+  | Invalid_batch           -> 21 (* 3.0.6 *)
   | _ -> 42
 
-let _parse_command (m:Message.t) =
-  let open Message in
+let _parse_command (m:message) =
   let command_bytes = unwrap_option "command_bytes" m.command_bytes in
-  let command_buf = Piqirun.init_from_string command_bytes in
-  let command = parse_command command_buf in
+  let command = Kinetic_pb.decode_command (Pbrt.Decoder.of_bytes command_bytes) in
   command
 
 module Error = Kinetic_error.Error
 
-let _assert_success (command:Command.t) =
+let _assert_success (command:command) =
   let code = _get_status command |> _get_status_code in
-  assert (code = `success)
+  assert (code = Success)
 
 let message_type2s = function
-  | `invalid_message_type -> "invalide_message_type"
-  | `get -> "get"
-  | `get_response -> "get_response"
-  | `put -> "put"
-  | `put_response -> "put_response"
-  | `delete -> "delete"
-  | `delete_response -> "delete_response"
-  | `start_batch_response -> "start_batch_response"
-  | `end_batch_response -> "end_batch_response"
-  | `flushalldata -> "flushalldata"
-  | `flushalldata_response -> "flushalldata_response"
-  | `getlog -> "getlog"
-  | `getlog_response -> "getlog_response"
+  | Invalid_message_type -> "invalide_message_type"
+  | Get -> "get"
+  | Get_response -> "get_response"
+  | Put -> "put"
+  | Put_response -> "put_response"
+  | Delete -> "delete"
+  | Delete_response -> "delete_response"
+  | Start_batch_response -> "start_batch_response"
+  | End_batch_response -> "end_batch_response"
+  | Flushalldata -> "flushalldata"
+  | Flushalldata_response -> "flushalldata_response"
+  | Getlog -> "getlog"
+  | Getlog_response -> "getlog_response"
   | _ -> "TODO: message type2s"
 
+(*
 let auth_type2s = function
    | `invalid_auth_type -> "invalid_auth_type"
    | `hmacauth -> "hmacauth"
    | `pinauth -> "pinauth"
    | `unsolicitedstatus -> "unsolicitedstatus"
+ *)
 
 let status_code2s = function
-  | `invalid_status_code -> "invalid_status_code"
-  | `not_attempted -> "not_attempted"
-  | `success -> "success"
-  | `hmac_failure -> "hmac_failure"
-  | `not_authorized -> "not_authorized"
-  | `version_failure -> "version_failure"
-  | `internal_error -> "internal_error"
-  | `header_required -> "header_required"
-  | `not_found -> "not_found"
-  | `version_mismatch -> "version_mismatch"
-  | `service_busy -> "service_busy"
-  | `expired -> "expired"
-  | `data_error -> "data_error"
-  | `perm_data_error -> "perm_data_error"
-  | `remote_connection_error ->"remove_connection_error"
-  | `no_space -> "no_space"
-  | `no_such_hmac_algorithm -> "no_such_hmac_algorithm"
-  | `invalid_request -> "invalid_request"
+  | Invalid_status_code -> "invalid_status_code"
+  | Not_attempted -> "not_attempted"
+  | Success -> "success"
+  | Hmac_failure -> "hmac_failure"
+  | Not_authorized -> "not_authorized"
+  | Version_failure -> "version_failure"
+  | Internal_error -> "internal_error"
+  | Header_required -> "header_required"
+  | Not_found -> "not_found"
+  | Version_mismatch -> "version_mismatch"
+  | Service_busy -> "service_busy"
+  | Expired -> "expired"
+  | Data_error -> "data_error"
+  | Perm_data_error -> "perm_data_error"
+  | Remote_connection_error ->"remove_connection_error"
+  | No_space -> "no_space"
+  | No_such_hmac_algorithm -> "no_such_hmac_algorithm"
+  | Invalid_request -> "invalid_request"
   | _ -> "TODO: status_code2s"
 
 
 
-let _get_message_type (command:Command.t) =
+let _get_message_type (command:command) =
   let header = unwrap_option "header" command.header in
   unwrap_option "message_type" header.message_type
 
@@ -136,7 +131,7 @@ let _get_message_auth_type msg = unwrap_option "auth_type" msg.auth_type
 let _assert_both m command typ code =
   let auth_type = _get_message_auth_type m in
   match auth_type with
-  | `hmacauth | `pinauth ->
+  | Hmacauth | Pinauth ->
      begin
        let header = unwrap_option "header" command.header in
        let htyp = unwrap_option "message type" header.message_type in
@@ -164,36 +159,33 @@ let _assert_both m command typ code =
          let e = Error.Generic(__FILE__,__LINE__, msg) in
          Lwt_result.fail e
      end
-  | `unsolicitedstatus ->
+  | Unsolicitedstatus ->
      let status = _get_status command in
      let ccode = _get_status_code status in
      let sm = _get_status_message status in
      let rci = status_code2i ccode in
      Lwt_result.fail (Error.KineticError(rci, sm))
-  | `invalid_auth_type ->
+  | Invalid_auth_type ->
      let e = Error.Assert "invalid_auth_type" in
      Lwt_result.fail e
 
 
 
-let maybe_verify_msg (m:Message.t) =
-  let open Message in
+let maybe_verify_msg (m:message) =
   match m.auth_type with
-  | Some `unsolicitedstatus -> ()
+  | Some Unsolicitedstatus -> ()
   | _ -> failwith "todo:verify_msg"
 
 
-let verify_status (status:Command_status.t) =
-  let open Command_status in
+let verify_status (status:command_status) =
   let code = unwrap_option "status.code" status.code in
   match code with
-  | `success -> ()
+  | Success -> ()
   | _ -> failwith "todo: other status"
 
 
 
-let verify_cluster_version (header:Command_header.t) my_cluster_version =
-
+let verify_cluster_version (header:command_header) my_cluster_version =
   let cluster_version = get_option 0L header.cluster_version in
   assert (my_cluster_version = cluster_version);
   ()
@@ -203,14 +195,12 @@ let verify_limits log = ()
 open Lwt
 
 
-
-
-let _get_sequence (command : Command.t) =
+let _get_sequence (command : command) =
   let header = unwrap_option "header" command.header in
   let seq = unwrap_option "sequence" header.sequence in
   seq
 
-let _get_ack_sequence (command:Command.t) =
+let _get_ack_sequence (command:command) =
   let header = unwrap_option "header" command.header in
   let ack_seq = unwrap_option "ack_sequence" header.ack_sequence in
   ack_seq
@@ -220,6 +210,8 @@ module Config = Kinetic_config.Config
 module Session = Kinetic_session.Session
 module Tag = Kinetic_tag.Tag
 
+type priority = Kinetic_types.command_priority = | Normal | Lowest | Lower | Higher | Highest
+              
 include Kinetic_integration
 
 module Batch(I:INTEGRATION) =
@@ -311,22 +303,22 @@ module Make(I:INTEGRATION) = struct
       let status = unwrap_option "command.status" command.status in
       let () = verify_status status in
       let header = unwrap_option "command.header" command.header in
-      let open Command_header in
+      
       let connection_id = unwrap_option "header.connection_id" header.connection_id in
       Lwt_log.debug_f ~section "connection_id:%Li" connection_id >>= fun () ->
       Lwt_log.debug_f "sequence:%s" (i64o2s header.sequence) >>= fun () ->
       Lwt_log.debug_f "ack_sequence:%s" (i64o2s header.ack_sequence) >>= fun () ->
       let () = verify_cluster_version header cluster_version in
-      let open Command_body in
+      
       let body = unwrap_option "command.body" command.body in
-      let open Command_get_log in
+      
       let log = unwrap_option "body.get_log" body.get_log in
       (*
          self.config = cmd.body.getLog.configuration
          self.limits = cmd.body.getLog.limits
        *)
 
-      let open Command_get_log_configuration in
+      
       let () = verify_limits log in
       let cfg = unwrap_option "configuration" log.configuration in
       let wwn = unwrap_option "world_wide_name" cfg.world_wide_name in
@@ -334,7 +326,7 @@ module Make(I:INTEGRATION) = struct
       let ipv4_addresses =
         List.fold_left
           (fun acc interface ->
-            let open Command_get_log_configuration_interface in
+            
             let ip4bin = unwrap_option "ipv4_address" interface.ipv4_address in
             if ip4bin = "" (* this nic has no connection, skip it *)
             then acc
@@ -350,7 +342,7 @@ module Make(I:INTEGRATION) = struct
                             cfg.serial_number in
       let version = unwrap_option "version" cfg.version in
       let limits = unwrap_option "limits" log.limits in
-      let open Command_get_log_limits in
+      
       let int_of k o =
         let m_k_s32 = unwrap_option k o in
         Int32.to_int m_k_s32
@@ -421,10 +413,10 @@ module Make(I:INTEGRATION) = struct
       Lwt_result.return session
 
 
-    let _assert_response (m:Message.t) (client:client) =
-      let open Message in
+    let _assert_response (m:message) (client:client) =
+      
       match m.auth_type with
-      | Some `unsolicitedstatus ->
+      | Some Unsolicitedstatus ->
          begin
            let command = _parse_command m in
            let status = _get_status command in
@@ -440,112 +432,148 @@ module Make(I:INTEGRATION) = struct
 
 
     let make_header ~session ~message_type ?timeout ?priority ?batch_id ?ack_sequence () =
-      let h = default_command_header () in
       let open Session in
-      let () = h.cluster_version <- Some session.cluster_version in
-      let () = h.connection_id <- Some session.connection_id in
-      let () = h.sequence <- Some session.sequence in
-      let () = h.timeout <- timeout in
-      let () = h.message_type <- Some message_type in
-      let () = h.batch_id <- batch_id in
-      let () = h.ack_sequence <- ack_sequence in
-      h
+      {
+        cluster_version = Some session.cluster_version;
+        connection_id = Some session.connection_id;
+        sequence = Some session.sequence;
+        timeout;
+        priority;
+        message_type = Some message_type;
+        batch_id;
+        ack_sequence;
+        early_exit = None;
+        time_quanta = None;
+      }
 
-    let make_body () =
-      let b = default_command_body () in
-      b
+    let make_body ?key_value ?batch ?get_log ?range ?pin_op ?setup () =
+      {
+        key_value;
+        batch;
+        get_log;
+        range;
+        pin_op;
+        setup;
+        
+        p2p_operation = None;
+        security = None;
+        
+        power = None;
+      }
 
+    let make_command header body =
+      {
+        header = Some header;
+        body = Some body;
+        status = None;
+      }
+      
+    let make_command_bytes command =
+      let encoder = Pbrt.Encoder.create () in
+      Kinetic_pb.encode_command command encoder;
+      let command_bytes = Pbrt.Encoder.to_bytes encoder in
+      command_bytes
+
+    let make_message_bytes message =
+      let encoder = Pbrt.Encoder.create() in
+      Kinetic_pb.encode_message message encoder;
+      let proto_raw = Pbrt.Encoder.to_bytes encoder in
+      proto_raw
+      
     let make_serialized_msg ?timeout ?priority session message_type ~body =
-      let open Message_hmacauth in
       let open Session in
 
       let header = make_header ~session ~message_type ?timeout ?priority () in
 
-      let command = default_command () in
-      let () = command.header <- Some header in
-
-      let () = command.body <- Some body in
-      let m = default_message () in
-
-      let command_bytes = Piqirun.to_string(gen_command command) in
-      m.command_bytes <- Some command_bytes;
+      let command = make_command header body in
+      
+      let command_bytes = make_command_bytes command in
       let hmac = calculate_hmac session.secret command_bytes in
-      let hmac_auth = default_message_hmacauth() in
-      hmac_auth.identity <- Some session.identity;
-      hmac_auth.hmac <- Some hmac;
-      m.auth_type <- Some `hmacauth;
-      m.hmac_auth <- Some hmac_auth;
-      let proto_raw = Piqirun.to_string(gen_message m) in
-      proto_raw
+      let hmac_auth = { 
+          identity = Some session.identity;
+          hmac = Some hmac;
+        }
+      in
+
+      let m = {
+          command_bytes = Some command_bytes;
+          auth_type = Some Hmacauth;
+          hmac_auth = Some hmac_auth;
+          pin_auth = None;
+        }
+      in
+      make_message_bytes m
 
   let make_pin_auth_serialized_msg session (pin:string) message_type ~body =
 
     let open Session in
 
     let header = make_header ~session ~message_type () in
-    let command = default_command () in
-    let () = command.header <- Some header in
+    let command = {
+        header = Some header;
+        body = Some body;
+        status = None;
+      }
+    in
+    
 
-    let () = command.body <- Some body in
-    let m = default_message () in
-
-    let command_bytes = Piqirun.to_string(gen_command command) in
-    m.command_bytes <- Some command_bytes;
-
-    m.auth_type <- Some `pinauth;
-    let pin_auth = default_message_pinauth() in
-    let () = pin_auth.Message_pinauth.pin <- Some pin in
-    m.pin_auth <- Some pin_auth;
-    let proto_raw = Piqirun.to_string(gen_message m) in
-    proto_raw
+    let command_bytes = make_command_bytes command in
+    let pin_auth = {
+        pin = Some pin
+      }
+    in
+    let m = {
+        command_bytes = Some command_bytes;
+        auth_type = Some Pinauth;
+        pin_auth = Some pin_auth;
+        hmac_auth = None;
+      }
+    in
+    make_message_bytes m
 
   let body_with_attributes
+        ?pin_op
         ~ko
         ~db_version
         ~new_version
         ~forced
         ~synchronization
         ~maybe_tag
+        ()
     =
-    let open Command_key_value in
 
-    let kv = default_command_key_value() in
-    kv.key <- ko;
-    kv.force <- forced;
-    kv.db_version <- db_version;
-    kv.new_version <- new_version;
-    let () = match maybe_tag with
-    | None -> ()
-    | Some tag ->
-       begin
-         match tag with
-         | Tag.Invalid h ->
-            begin
-              kv.algorithm <- Some `invalid_algorithm;
-              kv.tag <- Some h;
-            end
-         | Tag.Sha1 h ->
-            begin
-              kv.algorithm <- Some `sha1;
-              kv.tag <- Some h
-            end
-         | Tag.Crc32 h ->
-            let s = Bytes.create 4 in
-            _encode_fixed32 s 0 (Int32.to_int h);
-            kv.algorithm <- Some `crc32;
-            kv.tag <- Some s
-       end
-    in
-    let body = make_body () in
-    body.key_value <- Some kv;
     let translate = function
-      | WRITETHROUGH -> `writethrough
-      | WRITEBACK -> `writeback
-      | FLUSH     -> `flush
+      | WRITETHROUGH -> Writethrough
+      | WRITEBACK -> Writeback
+      | FLUSH     -> Flush
     in
     let sync = map_option translate synchronization in
-    kv.synchronization <- sync;
-    body
+    let algorithm, tag =
+      match maybe_tag with
+      | None -> None, None
+      | Some tag ->
+         begin
+           match tag with
+           | Tag.Invalid h -> Some Invalid_algorithm, Some h
+           | Tag.Sha1 h    -> Some Sha1, Some h
+           | Tag.Crc32 h   ->
+              let s = Bytes.create 4 in
+              _encode_fixed32 s 0 (Int32.to_int h);
+              Some Crc32, Some s
+         end
+    in
+    let key_value = {
+        key = ko;
+        force = forced;
+        db_version;
+        new_version;
+        synchronization = sync;
+        metadata_only = None;
+        tag;
+        algorithm;
+      }
+    in
+    make_body ~key_value ?pin_op()
 
   let make_delete_forced ?timeout ?priority client key =
     let body =
@@ -555,9 +583,9 @@ module Make(I:INTEGRATION) = struct
         ~new_version:None
         ~forced:(Some true)
         ~maybe_tag:None
-        ~synchronization:(Some WRITEBACK)
+        ~synchronization:(Some WRITEBACK) ()
     in
-    make_serialized_msg ?timeout ?priority client.session `delete ~body
+    make_serialized_msg ?timeout ?priority client.session Delete ~body
 
   let make_put
         ?timeout ?priority client
@@ -573,57 +601,59 @@ module Make(I:INTEGRATION) = struct
         ~new_version
         ~forced
         ~synchronization
-        ~maybe_tag:tag
+        ~maybe_tag:tag ()
     in
-    make_serialized_msg ?timeout ?priority client.session `put ~body
+    make_serialized_msg ?timeout ?priority client.session Put ~body
 
   
 
   let make_flush ?timeout ?priority session =
     let body = make_body () in
-    make_serialized_msg ?timeout ?priority session `flushalldata ~body
+    make_serialized_msg ?timeout ?priority session Flushalldata ~body
 
   let make_batch_message
         ?timeout
         ?priority
         ~body
         session message_type batch_id =
-    let open Message_hmacauth in
+    
     let open Session in
-    let command = default_command () in
+    
     let header = make_header ~session ~message_type ?timeout ?priority ~batch_id () in
-    let () = command.header <- Some header in
+    let command = make_command header body in
 
-    let () = command.body <- Some body in
+    
 
-    let m = default_message () in
-
-    let command_bytes = Piqirun.to_string(gen_command command) in
-    m.command_bytes <- Some command_bytes;
+    let command_bytes = make_command_bytes command in
     let hmac = calculate_hmac session.secret command_bytes in
-    let hmac_auth = default_message_hmacauth() in
-    hmac_auth.identity <- Some session.identity;
-    hmac_auth.hmac <- Some hmac;
-
-    m.auth_type <- Some `hmacauth;
-    m.hmac_auth <- Some hmac_auth;
-    let proto_raw = Piqirun.to_string(gen_message m) in
-    proto_raw
+    let hmac_auth = {
+        identity = Some session.identity;
+        hmac = Some hmac;
+      }
+    in
+    let m = {
+        command_bytes = Some command_bytes;
+        auth_type = Some Hmacauth;
+        hmac_auth = Some hmac_auth;
+        pin_auth = None;
+      }
+    in
+    make_message_bytes m
 
   let make_start_batch ?timeout ?priority session batch_id =
-    make_batch_message ?timeout ?priority session `start_batch batch_id
+    make_batch_message ?timeout ?priority session Start_batch batch_id
 
   let make_end_batch (b:B.t) =
     let open B in
-
-    let batch = default_command_batch () in
     let count = b.count in
-    let open Command_batch in
-    batch.count <- Some (Int32.of_int count);
-    let body = make_body () in
-    body.batch <- Some batch;
-
-    make_batch_message ~body b.session `end_batch b.batch_id 
+    let (batch:command_batch) = {
+        count = Some (Int32.of_int count);
+        sequence = [];
+        failed_sequence = None;
+      }
+    in
+    let body = make_body ~batch () in
+    make_batch_message ~body b.session End_batch b.batch_id 
 
 
   let tracing (session:Session.t) t =
@@ -684,7 +714,7 @@ module Make(I:INTEGRATION) = struct
     _assert_response r client >>=? fun () ->
     let command = _parse_command r in
     let () = Session.incr_sequence client.session in
-    _assert_both r command `put_response `success
+    _assert_both r command Put_response Success
 
   let delete_forced ?timeout ?priority (client:client) k =
     _assert_open client >>= fun () ->
@@ -695,7 +725,7 @@ module Make(I:INTEGRATION) = struct
     assert (vo = None);
     let command = _parse_command r in
     let () = Session.incr_sequence client.session in
-    _assert_type command `delete_response;
+    _assert_type command Delete_response;
     _assert_success command;
     Lwt_result.return ()
 
@@ -707,9 +737,9 @@ module Make(I:INTEGRATION) = struct
                  ~new_version:None
                  ~forced:None
                  ~synchronization:None
-                 ~maybe_tag:None
+                 ~maybe_tag:None ()
     in
-    make_serialized_msg ?timeout ?priority session `get ~body
+    make_serialized_msg ?timeout ?priority session Get ~body
 
   let get ?timeout ?priority client k =
     _assert_open client >>= fun () ->
@@ -727,15 +757,14 @@ module Make(I:INTEGRATION) = struct
     Lwt_log.debug_f ~section "code=%i" (status_code2i code) >>= fun () ->
     let () = Session.incr_sequence client.session in
     match code with
-    | `not_found ->
+    | Not_found ->
        Lwt_log.debug_f "`not_found" >>= fun () ->
        Lwt_result.return None
-    | `success    ->
-       Lwt_log.debug_f "`success" >>= fun () ->
+    | Success    ->
+       Lwt_log.debug_f "Success" >>= fun () ->
        begin
          let version =
            let body = unwrap_option "body" command.body in
-           let open Command_key_value in
            let kv = unwrap_option "kv" body.key_value in
            let db_version = kv.db_version in
            db_version
@@ -758,16 +787,24 @@ module Make(I:INTEGRATION) = struct
     | CAPACITIES
 
   let translate_log_type = function
-    | CAPACITIES -> `capacities
+    | CAPACITIES -> Capacities
 
   let make_getlog ?timeout ?priority session capacities =
-    let getlog = default_command_get_log () in
-    let open Command_get_log in
-    getlog.types <- List.map translate_log_type capacities;
-    let body = make_body () in
-    body.get_log <- Some getlog;
+    let get_log = {
+        types = List.map translate_log_type capacities;
+        utilizations = [];
+        temperatures = [];
 
-    make_serialized_msg ?timeout ?priority session `getlog ~body
+        capacity = None;
+        configuration = None;
+        statistics = [];
+        messages = None;
+        limits = None;
+        device = None;
+      }
+    in
+    let body = make_body ~get_log() in
+    make_serialized_msg ?timeout ?priority session Getlog ~body
 
   let get_capacities ?timeout ?priority client =
     _assert_open client >>= fun () ->
@@ -776,17 +813,15 @@ module Make(I:INTEGRATION) = struct
     _call client msg None >>=? fun (m,vo, proto_raw) ->
     _assert_response m client >>=? fun () ->
     let command = _parse_command m in
-    _assert_type command `getlog_response;
+    _assert_type command Getlog_response;
     let status = _get_status command in
     let code = _get_status_code status in
     let () = Session.incr_sequence client.session in
     match code with
-    | `success ->
+    | Success ->
        let body = unwrap_option "body" command.body in
        let getlog = unwrap_option "getlog" body.get_log in
-       let open Command_get_log in
        let capacity = unwrap_option "capacity" getlog.capacity in
-       let open Command_get_log_capacity in
        let nominal = unwrap_option "nominal_capacity_in_bytes" capacity.nominal_capacity_in_bytes in
        let portion_full = unwrap_option "portion_full" capacity.portion_full in
        Lwt_result.return (nominal, portion_full)
@@ -798,25 +833,23 @@ module Make(I:INTEGRATION) = struct
        Lwt_result.fail e
 
   let body_with_kr start_key sinc maybe_end_key reverse_results max_results =
-    let open Command_range in
-    let range = default_command_range () in
-    range.start_key <- Some start_key;
-    range.start_key_inclusive <- Some sinc;
-
-    let () =
+    let end_key, end_key_inclusive =
       match maybe_end_key with
-      | None -> ()
-      | Some (end_key, einc) ->
-         range.end_key   <- Some end_key;
-         range.end_key_inclusive <- Some einc
+      | None -> None, None
+      | Some (end_key, einc) -> Some end_key, Some einc
     in
-    range.reverse <- Some reverse_results;
-    let max32 = Int32.of_int max_results in
-    range.max_returned <- Some max32;
-
-    let body = make_body () in
-    body.range <- Some range;
-    body
+    let max_returned = Some (Int32.of_int max_results) in
+    let range = {
+        reverse = Some reverse_results;
+        start_key = Some start_key;
+        start_key_inclusive = Some sinc;
+        end_key;
+        end_key_inclusive;
+        max_returned;
+        keys = [];
+      }
+    in
+    make_body ~range ()
 
   let make_get_key_range
         ?timeout ?priority session
@@ -830,14 +863,14 @@ module Make(I:INTEGRATION) = struct
                    reverse_results
                    max_results
       in
-      make_serialized_msg ?timeout ?priority session `getkeyrange ~body
+      make_serialized_msg ?timeout ?priority session Getkeyrange ~body
 
-  let get_key_range_result (command : Command.t) =
+  let get_key_range_result (command : command) =
     match command.body with
     | None -> []
     | Some body ->
       let range   = unwrap_option "range" body.range in
-      let open Command_range in
+      
       let (keys:string list) = range.keys in
       keys
 
@@ -859,12 +892,12 @@ module Make(I:INTEGRATION) = struct
     _call client msg None >>=? fun (r,vo, _) ->
     _assert_response r client >>=? fun () ->
     let command = _parse_command r in
-    _assert_type command `getkeyrange_response;
+    _assert_type command Getkeyrange_response;
     Session.incr_sequence client.session;
     let status = _get_status command in
     let code = _get_status_code status in
     match code with
-    | `success ->
+    | Success ->
        let key_list = get_key_range_result command in
        Lwt_result.return key_list
     | x -> let sm = _get_status_message status in
@@ -908,12 +941,11 @@ module Make(I:INTEGRATION) = struct
                      entry
                      ~forced
       =
-      let open Message_hmacauth in
+      
       let open Session in
       
       let header = make_header ~session ~message_type ~batch_id ~ack_sequence:session.sequence () in
-      let command = default_command () in
-      command.header <- Some header;
+      
       
       let open Entry in
       let maybe_tag = map_option snd entry.vt in
@@ -923,21 +955,25 @@ module Make(I:INTEGRATION) = struct
                      ~new_version:entry.new_version
                      ~forced
                      ~synchronization
-                     ~maybe_tag
+                     ~maybe_tag ()
       in
-      command.body <- Some body;
-      let m = default_message () in
+      let command = make_command header body in
       
-      let command_bytes = Piqirun.to_string(gen_command command) in
-      m.command_bytes <- Some command_bytes;
+      let command_bytes = make_command_bytes command in
       let hmac = calculate_hmac session.secret command_bytes in
-      let hmac_auth = default_message_hmacauth() in
-      hmac_auth.identity <- Some session.identity;
-      hmac_auth.hmac <- Some hmac;
-      m.auth_type <- Some `hmacauth;
-      m.hmac_auth <- Some hmac_auth;
-      let proto_raw = Piqirun.to_string(gen_message m) in
-      proto_raw
+      let hmac_auth = {
+          identity = Some session.identity;
+          hmac = Some hmac;
+        }
+      in
+      let m = {
+          command_bytes = Some command_bytes;
+          auth_type = Some Hmacauth;
+          hmac_auth = Some hmac_auth;
+          pin_auth = None;
+        }
+      in
+      make_message_bytes m
 
   let batch_put
         (batch:B.t) entry
@@ -955,7 +991,7 @@ module Make(I:INTEGRATION) = struct
     let msg = make_batch_msg
                 batch.session
                 batch.batch_id
-                `put
+                Put
                 entry
                 ~forced
     in
@@ -977,7 +1013,7 @@ module Make(I:INTEGRATION) = struct
     let open B in
     let msg = make_batch_msg batch.session
                              batch.batch_id
-                             `delete
+                             Delete
                              entry
                              ~forced
     in
@@ -1018,12 +1054,12 @@ module Make(I:INTEGRATION) = struct
         network_receive_generic ~timeout I.create I.read I.read_bytes socket I.show_socket session.Session.trace
         >>=? fun (m, vo, proto_raw) ->
         Lwt_log.debug ~section "got msg" >>= fun () ->
-        let auth_type = _get_message_auth_type (m:Message.t) in
+        let auth_type = _get_message_auth_type (m:message) in
         let command = _parse_command m in
         begin
           match auth_type with
-          | `pinauth | `invalid_auth_type -> Error.Generic(__FILE__,__LINE__, "bad auth type: " ^ to_hex (proto_raw)) |> Lwt_result.fail 
-          | `unsolicitedstatus ->
+          | Pinauth | Invalid_auth_type -> Error.Generic(__FILE__,__LINE__, "bad auth type: " ^ to_hex (proto_raw)) |> Lwt_result.fail 
+          | Unsolicitedstatus ->
              begin
                let () = Lwt_log.ign_info_f "unsolicitedstatus: %s" (to_hex proto_raw) in
                let status = _get_status command in
@@ -1032,7 +1068,7 @@ module Make(I:INTEGRATION) = struct
                let rci = status_code2i ccode in
                Lwt_result.fail (Error.KineticError(rci,sm))
              end
-          | `hmacauth ->
+          | Hmacauth ->
              begin
                begin
                try _get_message_type command |> Lwt_result.return
@@ -1046,7 +1082,7 @@ module Make(I:INTEGRATION) = struct
                let status = _get_status command in
                let ccode = _get_status_code status in
                match ccode with
-               | `success -> Lwt_result.return ()
+               | Success -> Lwt_result.return ()
                | _ ->
                   let sm = _get_status_message status in
                   let dsm = _get_detailed_status_message status in
@@ -1072,9 +1108,9 @@ module Make(I:INTEGRATION) = struct
                             ~new_version:None
                             ~forced:None
                             ~synchronization:None
-                            ~maybe_tag:None
+                            ~maybe_tag:None ()
     in
-    make_serialized_msg ?timeout ?priority session `noop ~body
+    make_serialized_msg ?timeout ?priority session Noop ~body
 
   (*
 
@@ -1115,14 +1151,15 @@ module Make(I:INTEGRATION) = struct
     assert (vo = None);
     let command = _parse_command r in
     let () = Session.incr_sequence client.session in
-    _assert_both r command `noop_response `success
+    _assert_both r command Noop_response Success
 
   let make_instant_secure_erase session ~pin =
 
 
-    let pinop = default_command_pin_operation  () in
-    let open Command_pin_operation in
-    let () = pinop.pin_op_type <- Some `secure_erase_pinop in
+    let pin_op = {
+        pin_op_type = Some Secure_erase_pinop;
+      }
+    in
     let body =
       body_with_attributes
         ~ko:None
@@ -1131,11 +1168,12 @@ module Make(I:INTEGRATION) = struct
         ~forced:None
         ~synchronization:None
         ~maybe_tag:None
+        ~pin_op ()
     in
-    body.pin_op <- Some pinop;
+    
     make_pin_auth_serialized_msg
       session
-      pin `pinop ~body
+      pin Pinop ~body
 
   let instant_secure_erase ?pin client =
     _assert_open client >>= fun () ->
@@ -1147,7 +1185,7 @@ module Make(I:INTEGRATION) = struct
     assert (vo = None);
     let command = _parse_command r in
     let () = Session.incr_sequence client.session in
-    _assert_both r command `pinop_response `success
+    _assert_both r command Pinop_response Success
 
   let make_download_firmware session =
     (*
@@ -1173,15 +1211,15 @@ module Make(I:INTEGRATION) = struct
 
      *)
 
-    let open Command_setup in
-    let setup = default_command_setup () in
-    setup.firmware_download <- Some true;
-
-    let body = make_body () in
-    body.setup <- Some setup;
-
+    
+    let setup = {
+        firmware_download = Some true;
+        new_cluster_version = None;
+      }
+    in
+    let body = make_body ~setup () in
     make_serialized_msg
-      session `setup ~body
+      session Setup ~body
 
 
   let download_firmware client slod_data_slice =
@@ -1193,7 +1231,7 @@ module Make(I:INTEGRATION) = struct
     assert (vo = None);
     let command = _parse_command r in
     let () = Session.incr_sequence client.session in
-    _assert_both r command `setup_response `success
+    _assert_both r command Setup_response Success
     (*
 
     let p2p_push session (ic,oc) peer operations =
@@ -1205,7 +1243,7 @@ module Make(I:INTEGRATION) = struct
       let status = get_status_code r in
       let lwt_fail x = Lwt.fail(Failure x) in
       match status with
-      | `success -> Lwt.return_unit
+      | Success -> Lwt.return_unit
       | `invalid_status_code
       | `not_attempted
       | `hmac_failure
