@@ -278,7 +278,6 @@ module Make(I:INTEGRATION) = struct
       |WRITEBACK
       |FLUSH
     
-    type version = bytes option
 
     type closer = unit -> unit Lwt.t
 
