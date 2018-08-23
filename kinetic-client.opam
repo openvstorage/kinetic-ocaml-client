@@ -12,11 +12,9 @@ build: [
   ["dune" "build" "-p" name "-j" jobs]
 ]
 build-test: [["dune" "build" "@examples" "-j" jobs]]
-install: [make "install"]
-remove: ["ocamlfind" "remove" "kinetic-client"]
 depends: [
   "dune" {build}
-  "ocaml-protoc" {build & >= "1.2.0"}
+  "ocaml-protoc" {>= "1.2.0"}
   "lwt" {>= "3.2.0"}
   "lwt_log"
   "lwt_ssl"
