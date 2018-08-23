@@ -13,7 +13,7 @@ build: [
 ]
 build-test: [["dune" "build" "@examples" "-j" jobs]]
 depends: [
-  "dune" {build}
+  "dune" {build & >= "1.1.0"}
   "ocaml-protoc" {>= "1.2.0"}
   "lwt" {>= "3.2.0"}
   "lwt_log"
