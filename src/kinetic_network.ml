@@ -5,7 +5,7 @@
 
 open Kinetic_util
 open Lwt.Infix
-open Kinetic_piqi
+
 open Kinetic_error
 
 let _decode_fixed32 s off =
@@ -83,8 +83,7 @@ let network_receive_generic
           >>= fun () ->
 
           maybe_read_generic create read_v socket value_ln >>= fun vo ->
-          let buf = Piqirun.init_from_string proto_raw in
-          let m = parse_message buf in
+          let m = Kinetic_pb.decode_message (Pbrt.Decoder.of_bytes proto_raw) in
           Lwt_result.return (m,vo, proto_raw)
         )
     )

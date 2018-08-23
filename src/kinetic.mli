@@ -48,13 +48,12 @@ type key = bytes
 type version = bytes option
 type timeout_ms = int64
 
-type priority = [
-  | `normal
-  | `lowest
-  | `lower
-  | `higher
-  | `highest
-  ]
+type priority =
+  | Normal
+  | Lowest
+  | Lower
+  | Higher
+  | Highest
 
 module Tag : sig
   type t =
