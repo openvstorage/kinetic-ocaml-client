@@ -2,8 +2,8 @@
   (name kinetic_client)
   (public_name kinetic-client)
   (wrapped false)
-  (libraries lwt lwt.unix lwt_ssl cryptokit lwt_log ocaml-protoc ppx_deriving.std)
-  (preprocess      (pps ppx_deriving.show))
+  (libraries lwt lwt.unix lwt_ssl cryptokit lwt_log ocaml-protoc)
+  (preprocess  (pps ppx_deriving.show))
   (flags :standard -w -3-27-32-33-39)
 )
 
