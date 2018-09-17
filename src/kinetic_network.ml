@@ -98,15 +98,18 @@ let network_send_generic
       proto_raw vo show_socket trace
   =
   let prelude_len = 9 in
-  let prelude = Bytes.create prelude_len in
-  Bytes.set prelude 0 'F';
   let proto_raw_len = Bytes.length proto_raw in
-  _encode_fixed32 prelude 1 proto_raw_len;
+  let message_len = 9 + proto_raw_len in
+  let message = Bytes.create message_len in
+  Bytes.set message 0 'F';
+
+  _encode_fixed32 message 1 proto_raw_len;
   let v_len = match vo with
     | None -> 0
     | Some (v,off,len) -> len
   in
-  _encode_fixed32 prelude 5 v_len;
+  _encode_fixed32 message 5 v_len;
+  Bytes.blit proto_raw 0 message prelude_len proto_raw_len;
 
   begin
     if trace
@@ -116,8 +119,7 @@ let network_send_generic
       Lwt.return_unit
   end
     >>= fun () ->
-  write_exact_generic write_bytes socket prelude   0 prelude_len   >>= fun () ->
-  write_exact_generic write_bytes socket proto_raw 0 proto_raw_len >>= fun ()->
+  write_exact_generic write_bytes socket message 0 message_len   >>= fun () ->
   match vo with
   | None   -> Lwt.return_unit
   | Some (v,off,len) -> write_exact_generic write_v socket v off v_len 
