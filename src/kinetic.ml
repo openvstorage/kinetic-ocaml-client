@@ -664,8 +664,8 @@ module Make(I:INTEGRATION) = struct
     let config = session.config in
     let trace = client.session.trace in
     let timeout = config.timeout in
-    network_send_generic             I.write I.write_bytes socket msg vo I.show_socket trace >>= fun () ->
-    network_receive_generic I.create I.read  I.read_bytes  socket        I.show_socket trace ~timeout
+    network_send_generic             I.write I.write_bytes socket I.setsockopt msg vo I.show_socket trace >>= fun () ->
+    network_receive_generic I.create I.read  I.read_bytes  socket                     I.show_socket trace ~timeout
 
   let get_session t  = t.session
 
@@ -915,7 +915,7 @@ module Make(I:INTEGRATION) = struct
     let () = session.batch_id <- Int32.succ batch_id in
     let body = make_body () in
     let msg = make_start_batch ?timeout ?priority session batch_id ~body in
-    network_send_generic I.write I.write_bytes socket msg None I.show_socket session.Session.trace >>= fun () ->
+    network_send_generic I.write I.write_bytes socket I.setsockopt msg None I.show_socket session.Session.trace >>= fun () ->
     let batch = B.make session socket batch_id in
     Session.incr_sequence session;
     Session.batch_on session;
@@ -929,7 +929,7 @@ module Make(I:INTEGRATION) = struct
     let socket = batch.socket in
     let session = batch.session in
     let trace = session.Session.trace in
-    network_send_generic I.write I.write_bytes socket msg None I.show_socket trace >>= fun () ->
+    network_send_generic I.write I.write_bytes socket I.setsockopt msg None I.show_socket trace >>= fun () ->
     Session.incr_sequence session;
     Session.batch_off session;
     Lwt.return ()
@@ -998,7 +998,7 @@ module Make(I:INTEGRATION) = struct
     let vo = map_option fst entry.vt in
     let session = batch.session in
     let trace = session.Session.trace in
-    network_send_generic I.write I.write_bytes socket msg vo I.show_socket trace >>= fun () ->
+    network_send_generic I.write I.write_bytes socket I.setsockopt msg vo I.show_socket trace >>= fun () ->
     let () = B.inc_count batch in
     Session.incr_sequence session;
     Lwt_result.return ()
@@ -1019,7 +1019,7 @@ module Make(I:INTEGRATION) = struct
     let socket = batch.socket in
     let session = batch.session in
     let trace = session.Session.trace in
-    network_send_generic I.write I.write_bytes socket msg None I.show_socket trace >>= fun () ->
+    network_send_generic I.write I.write_bytes socket I.setsockopt msg None I.show_socket trace >>= fun () ->
     let () = B.inc_count batch in
     Session.incr_sequence session;
     Lwt_result.return ()

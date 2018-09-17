@@ -72,10 +72,11 @@ module type INTEGRATION = sig
 
   (*  the value type can be chosen by the integrator ... *)
 
+  val setsockopt : socket -> Unix.socket_bool_option -> bool -> unit
   val read  : socket -> value -> off -> len -> int Lwt.t
   val write : socket -> value -> off -> len -> int Lwt.t
 
-  (* but, the protocol uses bytes because of piqi *)
+  (* but, the protocol uses bytes because of protobuf implementation *)
   val read_bytes  : socket -> Bytes.t -> off -> len -> int Lwt.t
   val write_bytes : socket -> Bytes.t -> off -> len -> int Lwt.t
 
@@ -90,6 +91,8 @@ module BytesIntegration : sig
   val create : int -> value
   val show : value -> string
   val show_socket : socket -> string
+
+  val setsockopt : socket -> Unix.socket_bool_option -> bool -> unit
   val read  : socket -> value -> off -> len -> int Lwt.t
   val write : socket -> value -> off -> len -> int Lwt.t
 

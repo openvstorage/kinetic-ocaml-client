@@ -20,6 +20,8 @@ module type INTEGRATION = sig
   val create : int -> value
   val show : value -> string
   val show_socket : socket -> string
+
+  val setsockopt : socket -> Unix.socket_bool_option -> bool -> unit
   val read  : socket -> value -> off -> len -> int Lwt.t
   val write : socket -> value -> off -> len -> int Lwt.t
 
@@ -41,6 +43,10 @@ module BytesIntegration = struct
   let create = Bytes.create
   let show = trimmed
 
+  let setsockopt (socket:socket) (opt:Unix.socket_bool_option) (v:bool) =
+    let ufd = Lwt_ssl.get_unix_fd socket in
+    Unix.setsockopt ufd opt v
+    
   let read socket  = Lwt_ssl.read  socket
   let write socket = Lwt_ssl.write socket
 

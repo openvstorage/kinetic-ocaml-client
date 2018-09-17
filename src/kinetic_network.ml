@@ -94,7 +94,7 @@ let network_receive_generic
 
 
 let network_send_generic
-      write_v write_bytes socket
+      write_v write_bytes socket setsockopt
       proto_raw vo show_socket trace
   =
   let prelude_len = 9 in
@@ -115,10 +115,16 @@ let network_send_generic
     else
       Lwt.return_unit
   end
-    >>= fun () ->
+  >>= fun () ->
+  setsockopt socket Unix.TCP_NODELAY false;
   write_exact_generic write_bytes socket prelude   0 prelude_len   >>= fun () ->
   write_exact_generic write_bytes socket proto_raw 0 proto_raw_len >>= fun ()->
-  match vo with
-  | None   -> Lwt.return_unit
-  | Some (v,off,len) -> write_exact_generic write_v socket v off v_len 
+  begin
+    match vo with
+    | None   -> Lwt.return_unit
+    | Some (v,off,len) -> write_exact_generic write_v socket v off v_len
+  end >>= fun () ->
+  setsockopt socket Unix.TCP_NODELAY true;
+  Lwt.return_unit
+
 
