@@ -31,8 +31,9 @@ module type INTEGRATION = sig
 end
 
 module BytesIntegration = struct
-  type value = Bytes.t
+  type value = bytes
   type socket = Lwt_ssl.socket
+
   let show_socket socket =
     let fd = Lwt_ssl.get_unix_fd socket in
     let (fdi:int) = Obj.magic fd in
@@ -49,8 +50,10 @@ module BytesIntegration = struct
 
   let make_sha1 v_buff v_off v_len  =
     let h = Cryptokit.Hash.sha1() in
-      let () = h # add_substring v_buff v_off v_len in
-      Tag.Sha1 (h # result)
+    let () = h # add_substring v_buff v_off v_len in
+    let hrs = h # result in
+    let hr = Bytes.of_string hrs in
+    Tag.Sha1 hr
 
   let make_crc32 _ _ _ = failwith "todo: BytesValue.make_crc32"
 end

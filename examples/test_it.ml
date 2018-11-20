@@ -5,7 +5,12 @@
 
 open Kinetic_util
 
-let vco2s = show_option (fun (v,version) -> Printf.sprintf "Some(%S, %s)" v (so2s version))
+let vco2s =
+  show_option
+    (fun ((v:bytes),version) ->
+      let version_s = show_option Bytes.to_string version in
+      Printf.sprintf "Some(%S, %s)" (Bytes.to_string v) version_s
+    )
 
 
 open Lwt
@@ -48,20 +53,23 @@ let lwt_test name (f:unit -> unit K.result) : test_result Lwt.t=
   Lwt_log.debug_f "end of :%s" name >>= fun () ->
   Lwt.return r
 
-
+let (~~) s = Bytes.of_string s
 
 let test_get_non_existing client  : unit K.result =
-  K.get client "I do not exist?" >>=? fun vo ->
+  let key_s = "I do not exist?" in
+  K.get client ~~key_s >>=? fun vo ->
   match vo with
   | None -> Lwt_result.return ()
   | Some _ -> Error.Generic(__FILE__,__LINE__, "test case assert failed") |> Lwt_result.fail 
 
 let test_put_no_tag client =
-  let key = "test_put_no_tag" in
+  let key_s = "test_put_no_tag" in
+  let key = ~~key_s in
+  let v_s = key_s in
   let v = key in
   let v_slice = key, 0, Bytes.length v in
   let synchronization = Some K.WRITEBACK in
-  Lwt_io.printlf "drive[%S] <- Some %S%!" key v >>= fun () ->
+  Lwt_io.printlf "drive[%S] <- Some %S%!" key_s v_s >>= fun () ->
   K.put
     client
     key v_slice
@@ -76,12 +84,15 @@ let test_put_no_tag client =
   
 
 let test_put_empty_string client =
-  let key = "test_put_empty_string" in
-  let v = "" in
+  let key_s = "test_put_empty_string" in
+  let v_s = "" in
+  let v = ~~v_s
+  and key = ~~key_s
+  in
   let v_slice = v, 0, Bytes.length v in
   let tag = Some (Tag.Crc32 0x0l) in
   let synchronization = Some K.WRITEBACK in
-  Lwt_io.printlf "drive[%S] <- Some %S%!" key v >>= fun () ->
+  Lwt_io.printlf "drive[%S] <- Some %S%!" key_s v_s >>= fun () ->
   K.put
     client
     key v_slice
@@ -99,14 +110,15 @@ let test_put_empty_string client =
      if v2 <> v
      then Error.Generic(__FILE__,__LINE__, "test case assert failed") |> Lwt_result.fail
      else
-       if version <> Some ""
+       if version <> Some Bytes.empty
        then Error.Generic(__FILE__,__LINE__, "test case assert failed") |> Lwt_result.fail
        else Lwt_result.return ()
 
 let test_put_timeout client =
-  let key = "test_put_timeout" in
+  let key_s = "test_put_timeout" in
+  let key = ~~key_s in
   let v = key in
-  let v_slice = key,0,Bytes.length v in
+  let v_slice = key, 0, Bytes.length v in
   let tag = K.make_sha1 v_slice in
   let timeout = 1L in (* 1 ms *)
   K.put ~timeout client key v_slice
@@ -124,30 +136,31 @@ let test_noop client =
 
 
 let batch_single_put client =
-  let v = "ZZZ" in
+  let v_s = "ZZZ" in
+  let v = ~~v_s in
   let v_slice = v, 0 , Bytes.length v in
   let tag = K.make_sha1 v_slice in
   let pe = K.Entry.make
-             ~key:"zzz"
+             ~key:~~"zzz"
              ~db_version:None
-             ~new_version:(Some "ZZZ")
+             ~new_version:(Some ~~"ZZZ")
              (Some (v_slice,tag))
   in
   K.do_batch client [BPut (pe,Some true)]  >>=? fun () ->
   Lwt_result.return ()
 
 let batch_test_put_delete client =
-  let v = "XXX" in
+  let v = ~~"XXX" in
   let v_slice = v,0,Bytes.length v in
   let tag = K.make_sha1 v_slice in
   let pe = K.Entry.make
-             ~key:"xxx"
+             ~key:~~"xxx"
              ~db_version:None
              ~new_version:None
              (Some (v_slice, tag))
   in
   let de = K.Entry.make
-             ~key:"xxx"
+             ~key:~~"xxx"
              ~db_version:None
              ~new_version: None
              None
@@ -157,7 +170,7 @@ let batch_test_put_delete client =
 let batch_delete_non_existing client =
   let de =
     K.Entry.make
-      ~key:"I do not exist"
+      ~key:~~"I do not exist"
       ~db_version:None
       ~new_version:None
       None
@@ -180,7 +193,7 @@ let _make_batch_put key v =
 
 
 let batch_3_puts client =
-  let make_key i = Printf.sprintf "batch_test_3_puts:key_%03i" i in
+  let make_key i = ~~(Printf.sprintf "batch_test_3_puts:key_%03i" i) in
   K.do_batch client (List.map (fun k -> let k' = make_key k in _make_batch_put k' k') [0;1;2])
 
 
@@ -195,7 +208,7 @@ let batch_too_fat client =
      Lwt_result.return ()
   | Some max ->
      begin
-       let make_key i = Printf.sprintf "batch_too_fat:key_%03i" i in
+       let make_key i = ~~(Printf.sprintf "batch_too_fat:key_%03i" i) in
        let n = max + 5 in
        let rec loop operations i =
          if i = n
@@ -218,7 +231,7 @@ let batch_too_fat client =
 
 
 let test_crc32 client =
-  let key = "test_crc32_key" in
+  let key = ~~"test_crc32_key" in
   let v = key in
   let v_slice = v,0,Bytes.length v in
   (*let tag = K.Crc32 0xEAE10D3Al in*)
@@ -236,11 +249,13 @@ let test_put_get_delete client =
     if i = 400
     then Lwt_result.return ()
     else
-      let key = Printf.sprintf "x_%05i" i  in
-      let v = Printf.sprintf "value_%05i" i in
+      let key_s = Printf.sprintf "x_%05i" i  in
+      let key = ~~key_s in
+      let v_s = Printf.sprintf "value_%05i" i in
+      let v = ~~v_s in
       let v_slice = v,0,Bytes.length v in
       let synchronization = Some K.WRITEBACK in
-      Lwt_io.printlf "drive[%S] <- Some %S%!" key v >>= fun () ->
+      Lwt_io.printlf "drive[%S] <- Some %S%!" key_s v_s >>= fun () ->
       let tag = K.make_sha1 v_slice in
 
       K.put
@@ -252,26 +267,26 @@ let test_put_get_delete client =
         ~synchronization
       >>=? fun () ->
       K.get client key >>=? fun vco ->
-      Lwt_io.printlf "drive[%S]=%s%!" key (vco2s vco) >>= fun () ->
+      Lwt_io.printlf "drive[%S]=%s%!" key_s (vco2s vco) >>= fun () ->
       let () = match vco with
       | None -> failwith "should be present"
       | Some (value2, version) ->
          begin
            assert (v = value2);
-           assert (version = Some "");
+           assert (version = Some Bytes.empty);
          end
       in
       K.delete_forced client key >>=? fun () ->
-      Lwt_io.printlf "deleted %S" key >>= fun () ->
+      Lwt_io.printlf "deleted %S" key_s >>= fun () ->
       K.get client key >>=? fun vco ->
-      Lwt_io.printlf "drive[%S]=%s" key (vco2s vco) >>= fun () ->
+      Lwt_io.printlf "drive[%S]=%s" key_s (vco2s vco) >>= fun () ->
       assert (vco = None);
       loop (i+1)
   in
   loop 0
 
 let test_put_largish client =
-  let key = "largish" in
+  let key = ~~"largish" in
   let v = Bytes.create 100_000 in
   let v_slice = v,0,Bytes.length v in
   let tag = K.make_sha1 v_slice in
@@ -289,13 +304,15 @@ let test_put_largish client =
 
 
 let test_put_version client =
-  let key = "with_version" in
+  let key_s = "with_version" in
+  let key = ~~key_s in
   K.delete_forced client key >>=? fun () ->
-  Lwt_log.debug_f "deleted %S" key >>= fun () ->
-  let v = "the_value" in
+  Lwt_log.debug_f "deleted %S" key_s >>= fun () ->
+  let v_s = "the_value" in
+  let v = ~~v_s in
   let v_slice = v,0,Bytes.length v in
   let tag = K.make_sha1 v_slice in
-  let version = Some "0" in
+  let version = Some ~~"0" in
   let synchronization = Some K.FLUSH in
   K.put
     client key v_slice
@@ -307,11 +324,11 @@ let test_put_version client =
   >>=? fun () ->
   K.get client key >>=? fun vco ->
   Lwt_log.debug_f "vco=%s" (vco2s vco) >>= fun () ->
-  let new_version = Some "1" in
-  let v2 = "next_value" in
+  let new_version = Some ~~"1" in
+  let v2 = ~~"next_value" in
   let v2_slice = v2,0,Bytes.length v2 in
   let tag2 = K.make_sha1 v2_slice in
-  Lwt_log.debug_f "new_version:%s" (so2s new_version) >>= fun () ->
+  Lwt_log.debug_f "new_version:%s" (show_option Bytes.to_string new_version) >>= fun () ->
   K.put
     client key v2_slice
     ~db_version:new_version ~new_version
@@ -334,8 +351,10 @@ let fill client n =
     if i = n
     then Lwt_result.return ()
     else
-      let key = Printf.sprintf "x_%05i" i in
-      let v = Printf.sprintf "value_%05i" i in
+      let key_s = Printf.sprintf "x_%05i" i in
+      let key = ~~key_s in
+      let v_s = Printf.sprintf "value_%05i" i in
+      let v = ~~v_s in
       let v_slice = v, 0, Bytes.length v in
       let tag = K.make_sha1 v_slice in
       begin
@@ -354,30 +373,33 @@ let fill client n =
   in
   loop 0
 
-
-
+let assert_string ?(msg="") expected got =
+  if String.equal expected got
+  then ()
+  else failwith (Printf.sprintf "%s expected:%S got:%S" msg expected got)
+  
 let range_test client =
   fill client 1000 >>=? fun () ->
   K.get_key_range
     client
-    "x" true
-    (Some ("y",true))
+    ~~"x" true
+    (Some (~~"y",true))
     false 20
   >>=? fun keys ->
-  Lwt_io.printlf "result = [%s] (len = %i)\n%!" (String.concat "; " keys) (List.length keys) >>= fun () ->
+  Lwt_io.printlf "result = [%s] (len = %i)\n%!" (bl2s keys) (List.length keys) >>= fun () ->
   assert (List.length keys = 20);
   let hd = List.hd keys in
-  Lwt_io.printlf "head = %s\n" hd >>= fun () ->
-  assert (List.hd keys= "x_00000");
+  Lwt_io.printlf "head = %s\n" (hd |> Bytes.to_string) >>= fun () ->
+  assert_string ~msg:"hd" (List.hd keys |> Bytes.to_string) "x_00000";
   Lwt_result.return ()
 
 let range_test_reverse client =
   fill client 1000 >>=? fun () ->
   (* note the order, which differs from the specs *)
-  K.get_key_range client "x" true (Some("y",true)) true 20 >>=? fun keys ->
-  Lwt_io.printlf "[%s]\n%!" (String.concat "; " keys) >>= fun () ->
+  K.get_key_range client ~~"x" true (Some(~~"y",true)) true 20 >>=? fun keys ->
+  Lwt_io.printlf "[%s]\n%!" (bl2s keys) >>= fun () ->
   assert (List.length keys = 20);
-  assert (List.hd keys= "x_00999");
+  assert_string  ~msg:"hd" (List.hd keys |> Bytes.to_string) "x_00999";
   Lwt_result.return ()
 
 

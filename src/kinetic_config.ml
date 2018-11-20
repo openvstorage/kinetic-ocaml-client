@@ -9,10 +9,10 @@ module Config = struct
     type t = {
         vendor: string;
         model:string;
-        serial_number: string;
-        world_wide_name: string;
+        serial_number: bytes;
+        world_wide_name: bytes;
         version: string;
-        ipv4_addresses : string list;
+        ipv4_addresses : bytes list;
         max_key_size: int;
         max_value_size: int;
         max_version_size: int;
