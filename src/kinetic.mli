@@ -7,10 +7,10 @@ module Config: sig
   type t = {
       vendor: string;
       model:string;
-      serial_number: string;
-      world_wide_name: string;
+      serial_number: bytes;
+      world_wide_name: bytes;
       version: string;
-      ipv4_addresses: string list;
+      ipv4_addresses: bytes list;
       (* limits *)
       max_key_size:int;
       max_value_size: int;
@@ -196,7 +196,7 @@ module Make(I:INTEGRATION) : sig
 
   val noop: ?timeout:timeout_ms -> ?priority:priority -> client -> unit result
 
-  val instant_secure_erase: ?pin:string -> client -> unit result
+  val instant_secure_erase: ?pin:bytes -> client -> unit result
 
   val download_firmware: client -> I.value slice -> unit result
 

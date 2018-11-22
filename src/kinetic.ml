@@ -10,12 +10,14 @@ open Kinetic_types
 
 
 let calculate_hmac secret msg =
+  let msg_len = Bytes.length msg in
   let sx0 = Bytes.create 4 in
-  _encode_fixed32 sx0 0 (String.length msg);
+  _encode_fixed32 sx0 0 msg_len;
   let h = Cryptokit.MAC.hmac_sha1 secret in
-  let () = h # add_string sx0 in
-  let () = h # add_string msg in
-  h # result
+  let () = h # add_substring sx0 0 4 in
+  let () = h # add_substring msg 0 msg_len in
+  h # result |> Bytes.of_string
+
 
 
 let _assert_type (command:command) typ =
@@ -35,7 +37,9 @@ let _get_status_message (status:command_status) =
   let msg = unwrap_option "status.message" status.status_message in
   msg
 
-let _get_detailed_status_message (status:command_status) = get_option "None" status.detailed_message
+let _get_detailed_status_message =
+  let none_bytes = Bytes.of_string "None" in
+  fun (status:command_status) -> get_option none_bytes status.detailed_message
 
 let status_code2i = function
   | Invalid_status_code     -> -1
@@ -263,7 +267,7 @@ module Make(I:INTEGRATION) = struct
                       Tag.show)
       in
       Printf.sprintf "{ key=%S; db_version=%s; new_version=%s; vo=%s }"
-        e.key
+        (e.key |> Bytes.to_string)
         (so2hs e.db_version)
         (so2hs e.new_version)
         (vt2s e.vt)
@@ -337,7 +341,7 @@ module Make(I:INTEGRATION) = struct
           (fun acc interface ->
             
             let ip4bin = unwrap_option "ipv4_address" interface.ipv4_address in
-            if ip4bin = "" (* this nic has no connection, skip it *)
+            if ip4bin = Bytes.empty (* this nic has no connection, skip it *)
             then acc
             else ip4bin :: acc
           ) []
@@ -513,7 +517,7 @@ module Make(I:INTEGRATION) = struct
       in
       make_message_bytes m
 
-  let make_pin_auth_serialized_msg session (pin:string) message_type ~body =
+  let make_pin_auth_serialized_msg session (pin:bytes) message_type ~body =
 
     let open Session in
 
@@ -880,14 +884,14 @@ module Make(I:INTEGRATION) = struct
     | Some body ->
       let range   = unwrap_option "range" body.range in
       
-      let (keys:string list) = range.keys in
+      let (keys:key list) = range.keys in
       keys
 
 
   let get_key_range
         ?timeout ?priority client
-        (start_key:string) sinc
-        (maybe_end_key: (string * bool) option)
+        (start_key:key) sinc
+        (maybe_end_key: (key * bool) option)
         (reverse_results:bool)
         (max_results:int) =
     _assert_open client >>= fun () ->
@@ -1096,7 +1100,7 @@ module Make(I:INTEGRATION) = struct
                   let sm = _get_status_message status in
                   let dsm = _get_detailed_status_message status in
                   Lwt_log.ign_debug_f ~section
-                    "dsm:%S" dsm;
+                    "dsm:%S" (dsm |> Bytes.to_string);
                   let (rci:int) = status_code2i ccode in
                   Error.KineticError(rci,sm) |> Lwt_result.fail
              end
@@ -1187,7 +1191,7 @@ module Make(I:INTEGRATION) = struct
   let instant_secure_erase ?pin client =
     _assert_open client >>= fun () ->
     _assert_no_batch client >>= fun () ->
-    let pin = get_option "" pin in
+    let pin = get_option Bytes.empty pin in
     let msg = make_instant_secure_erase client.session ~pin in
     let vo = None in
     _call client msg vo >>=? fun(r,vo, _) ->
@@ -1294,7 +1298,7 @@ module Make(I:INTEGRATION) = struct
     Lwt_result.return {session; socket; closer; closed = false}
 
   let dispose (t:client) =
-    Lwt_log.debug_f "dispose: %s" ([%show : string list] (t.session.config.ipv4_addresses)) >>= fun () ->
+    Lwt_log.debug_f "dispose: %s" (bl2s (t.session.config.ipv4_addresses)) >>= fun () ->
     if not t.closed
     then
       begin

@@ -8,8 +8,12 @@ open Lwt.Infix
 
 open Kinetic_error
 
-let _decode_fixed32 s off =
-  let byte x = int_of_char s.[off + x] in
+let _decode_fixed32 (b:Bytes.t) off =
+  let byte x =
+    let pos = off + x in
+    let c = Bytes.get b pos in
+    int_of_char c
+  in
   ((byte 3) lsl  0)
   + ((byte 2) lsl  8)
   + ((byte 1) lsl 16)
@@ -60,7 +64,7 @@ let network_receive_generic
         (fun () ->
           let msg_bytes = Bytes.create 9 in
           read_exact_generic read_bytes socket msg_bytes 0 9 >>= fun () ->
-          let magic = msg_bytes.[0] in
+          let magic = Bytes.get msg_bytes 0 in
           let proto_ln = _decode_fixed32 msg_bytes 1 in
           let value_ln = _decode_fixed32 msg_bytes 5 in
           (*

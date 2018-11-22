@@ -3,21 +3,19 @@
   This file is part of Open vStorage. For license information, see <LICENSE.txt>
 *)
 
-let to_hex = function
-  | "" -> ""
-  | s ->
-     let n_chars = String.length s * 3 in
-     let buf = Buffer.create n_chars in
-     let hex c = Printf.sprintf "%02x " (Char.code c) in
-     String.iter (fun c -> Buffer.add_string buf (hex c)) s;
-     Buffer.sub buf 0 (n_chars - 1)
+let to_hex (b:Bytes.t) =
+  let n_chars = Bytes.length b * 3 in
+  let buf = Buffer.create n_chars in
+  let hex c = Printf.sprintf "%02x " (Char.code c) in
+  Bytes.iter (fun c -> Buffer.add_string buf (hex c)) b;
+  Buffer.sub buf 0 (n_chars - 1)
 
 let trimmed x =
   let x', post =
-    let len = String.length x in
+    let len = Bytes.length x in
     if len < 20
     then x, "" else
-      (String.sub x 0 20), Printf.sprintf "... (%i bytes)" len
+      (Bytes.sub x 0 20), Printf.sprintf "... (%i bytes)" len
   in
   Printf.sprintf "0x%S%s" (to_hex x')  post
 
@@ -40,6 +38,10 @@ let show_option x2s = function
 
 let show_pair   x2s y2s (x,y) = Printf.sprintf "(%s, %s)" (x2s x) (y2s y)
 let show_tuple3 x2s y2s z2s (x,y,z) = Printf.sprintf "(%s, %s, %s)" (x2s x) (y2s y) (z2s z)
+
+let bl2s keys =
+  List.map Bytes.to_string keys
+  |> String.concat ";"
 
 let so2s   = show_option (fun x -> x)
 let so2hs  = show_option (fun x -> Printf.sprintf "0x%s" (to_hex x))
