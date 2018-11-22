@@ -52,6 +52,10 @@ type priority =
   | Normal
   | Lowest
   | Lower
+  | Low
+  | Lowernormal
+  | Highernormal
+  | High
   | Higher
   | Highest
 

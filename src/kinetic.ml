@@ -210,7 +210,17 @@ module Config = Kinetic_config.Config
 module Session = Kinetic_session.Session
 module Tag = Kinetic_tag.Tag
 
-type priority = Kinetic_types.command_priority = | Normal | Lowest | Lower | Higher | Highest
+type priority = Kinetic_types.command_priority =
+  | Normal
+  | Lowest
+  | Lower
+  | Low
+  | Lowernormal
+  | Highernormal
+  | High
+  | Higher
+  | Highest
+
               
 include Kinetic_integration
 
@@ -1212,7 +1222,7 @@ module Make(I:INTEGRATION) = struct
 
     
     let setup = {
-        firmware_download = Some true;
+        setup_op_type = Some Firmware_setupop;
         new_cluster_version = None;
       }
     in
