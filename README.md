@@ -1,7 +1,7 @@
 Kinetic OCaml Client
 ====================
 This is an OCaml client for [Seagate's Kinetic drives](https://developers.seagate.com/display/KV/Kinetic+Open+Storage+Documentation+Wiki).
-Currently, it uses protocol version 3.1.1.
+Currently, it uses protocol version 4.0.0.
 
 
 Installation
@@ -9,11 +9,12 @@ Installation
 In order to build the client, you need to have some OCaml libraries present.
 In concreto, you need:
   - lwt
-  - piqi
-  - cryptokit
-  - cmdliner
   - lwt_ssl
   - lwt_log
+  - cryptokit
+  - ocaml-protoc
+  - cmdliner (for tests)
+  - dune
 
 
 If you have these, you can compile everything with:
@@ -26,7 +27,7 @@ You can install the library with:
 
 
 ```
-$> make install-lib
+$> make install
 ```
 
 
@@ -42,7 +43,7 @@ typically you'd do something like:
 ```OCaml
     ...
     Kinetic.wrap_socket socket
-    >>=? client ->
+    >>=? fun client ->
     Kinetic.put client
       "the_key" (Some "the value")
       ~db_version:None ~new_version:None
@@ -62,7 +63,7 @@ Protocol?
 ---------
 
 There is a rather stable `protocol`
-defined in Seagate's [kinetic-protocol](https://github.com/Seagate/kinetic-protocol) which defines the serialization for valid messages. The protocol itself is rather implicitly defined by the Kinetic Simulator, and the interpretation of what comprises an acceptable client/server conversation varies between Simulator releases.
+defined in Seagate's [kinetic-protocol](https://github.com/Seagate/kinetic-protocol) which defines the serialization for valid messages. The protocol itself is rather implicitly defined by the Kinetic drive, and the interpretation of what comprises an acceptable client/server conversation varies between different firmware releases.
 All this to say that even if both client and server state they support protocol version X, they still might not be able to talk to each other. YMMV
 
 Todo
