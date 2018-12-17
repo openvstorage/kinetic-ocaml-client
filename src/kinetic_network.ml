@@ -27,15 +27,31 @@ let _encode_fixed32 (s:bytes) off i =
   Bytes.set s (off + 3) (get_char i  0)
 
 
-let read_exact_generic read_f socket (buf:'a) off len =
-  let rec loop off = function
+let read_exact_generic read_f socket (buf:'a) (off:int) (len:int) =
+  let t0 = Unix.gettimeofday() in
+  let small_chunk = len lsr 3 in
+  let rec loop t_prev off = function
     | 0   -> Lwt.return_unit
     | len -> read_f socket buf off len >>= fun bytes_read ->
              if bytes_read = 0
              then Lwt.fail End_of_file
-             else loop (off + bytes_read) (len - bytes_read)
+             else
+               begin
+                 let t_prev' = Unix.gettimeofday() in
+                 let todo' = len - bytes_read in
+                 let off' = off + bytes_read in
+                 (if bytes_read < small_chunk
+                  then
+                    let speed_inv = (t_prev' -. t_prev) /. (float len) in
+                    let will_take = (float todo') *. speed_inv in
+                    Lwt_unix.sleep will_take
+                  else
+                    Lwt.return_unit)
+                 >>= fun () ->
+                 loop t_prev' off' todo'
+               end
   in
-  loop off len
+  loop t0 off len
 
 let write_exact_generic write_f socket (buf:'a) off len =
   let rec loop off = function
@@ -85,7 +101,6 @@ let network_receive_generic
             else Lwt.return_unit
           end
           >>= fun () ->
-
           maybe_read_generic create read_v socket value_ln >>= fun vo ->
           let m = Kinetic_pb.decode_message (Pbrt.Decoder.of_bytes proto_raw) in
           Lwt_result.return (m,vo, proto_raw)
