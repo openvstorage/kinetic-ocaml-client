@@ -44,7 +44,8 @@ let read_exact_generic read_f socket (buf:'a) (off:int) (len:int) =
                   then
                     let speed_inv = (t_prev' -. t_prev) /. (float len) in
                     let will_take = (float todo') *. speed_inv in
-                    Lwt_unix.sleep will_take
+                    let will_take' = min will_take 0.1 in
+                    Lwt_unix.sleep will_take'
                   else
                     Lwt.return_unit)
                  >>= fun () ->

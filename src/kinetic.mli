@@ -79,7 +79,7 @@ module type INTEGRATION = sig
   val read  : socket -> value -> off -> len -> int Lwt.t
   val write : socket -> value -> off -> len -> int Lwt.t
 
-  (* but, the protocol uses bytes because of piqi *)
+  (* but, the protocol uses bytes because of ocaml-protoc *)
   val read_bytes  : socket -> Bytes.t -> off -> len -> int Lwt.t
   val write_bytes : socket -> Bytes.t -> off -> len -> int Lwt.t
 
