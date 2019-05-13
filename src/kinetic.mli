@@ -146,6 +146,8 @@ module Make(I:INTEGRATION) : sig
 
   val get_session : client -> session
 
+  val tracing_info : session -> string
+
   type synchronization =
     | WRITETHROUGH
     | WRITEBACK

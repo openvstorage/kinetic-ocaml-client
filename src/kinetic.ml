@@ -683,6 +683,8 @@ module Make(I:INTEGRATION) = struct
 
   let get_session t  = t.session
 
+  let tracing_info s = Session.tracing_info s
+
   let _assert_value_size session value_size =
     let cfg = get_config session in
     let max_value_size = cfg.Config.max_value_size in
