@@ -146,7 +146,8 @@ let batch_single_put client =
              ~new_version:(Some ~~"ZZZ")
              (Some (v_slice,tag))
   in
-  K.do_batch client [BPut (pe,Some true)]  >>=? fun () ->
+  K.do_batch client ~trace_batch:true [BPut (pe,Some true)]  >>=? fun r ->
+  Lwt_log.debug_f "tracing_info %S" (so2s r) >>= fun () ->
   Lwt_result.return ()
 
 let batch_test_put_delete client =
@@ -165,7 +166,9 @@ let batch_test_put_delete client =
              ~new_version: None
              None
   in
-  K.do_batch client [BPut (pe, Some true);BDel (de, Some true)] 
+  K.do_batch client [BPut (pe, Some true);BDel (de, Some true)]
+  >>=? fun r ->
+  Lwt_result.return ()
 
 let batch_delete_non_existing client =
   let de =
@@ -176,6 +179,8 @@ let batch_delete_non_existing client =
       None
   in
   K.do_batch client [BDel (de, Some true)]
+  >>=? fun r ->
+  Lwt_result.return ()
 
 
 let _make_batch_put key v =
@@ -195,6 +200,8 @@ let _make_batch_put key v =
 let batch_3_puts client =
   let make_key i = ~~(Printf.sprintf "batch_test_3_puts:key_%03i" i) in
   K.do_batch client (List.map (fun k -> let k' = make_key k in _make_batch_put k' k') [0;1;2])
+  >>=? fun r ->
+  Lwt_result.return ()
 
 
 let batch_too_fat client =

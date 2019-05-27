@@ -1045,7 +1045,7 @@ module Make(I:INTEGRATION) = struct
     |BPut of Entry.t * forced
     |BDel of Entry.t * forced
            
-  let do_batch ?(timeout:int64 option) ?priority client operations =
+  let do_batch ?(timeout:int64 option) ?priority ?(trace_batch = false) client operations =
     _assert_open client >>= fun () ->
     start_batch_operation ?timeout ?priority client >>= fun batch ->
 
@@ -1109,7 +1109,13 @@ module Make(I:INTEGRATION) = struct
         end
       in 
       if cnt = 0
-      then Lwt_result.return ()
+      then
+        let result =
+          if trace_batch
+          then Some (Session.tracing_info session)
+          else None
+        in
+          Lwt_result.return result
       else
         Lwt_log.debug_f "count = %i" cnt >>= fun () ->
         read_msg batch.socket >>=? fun() ->

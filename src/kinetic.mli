@@ -146,8 +146,6 @@ module Make(I:INTEGRATION) : sig
 
   val get_session : client -> session
 
-  val tracing_info : session -> string
-
   type synchronization =
     | WRITETHROUGH
     | WRITEBACK
@@ -221,7 +219,10 @@ module Make(I:INTEGRATION) : sig
     | BDel of Entry.t * forced
 
   val do_batch :
-    ?timeout:timeout_ms -> ?priority:priority -> client -> batch_operation list -> unit result
+    ?timeout:timeout_ms
+    -> ?priority:priority
+    -> ?trace_batch:bool
+    -> client -> batch_operation list -> string option result
 
   (* (* we might need it again in the future *)
     val p2p_push : session -> connection ->
