@@ -79,7 +79,7 @@ module type INTEGRATION = sig
   val read  : socket -> value -> off -> len -> int Lwt.t
   val write : socket -> value -> off -> len -> int Lwt.t
 
-  (* but, the protocol uses bytes because of piqi *)
+  (* but, the protocol uses bytes because of ocaml-protoc *)
   val read_bytes  : socket -> Bytes.t -> off -> len -> int Lwt.t
   val write_bytes : socket -> Bytes.t -> off -> len -> int Lwt.t
 
@@ -219,7 +219,10 @@ module Make(I:INTEGRATION) : sig
     | BDel of Entry.t * forced
 
   val do_batch :
-    ?timeout:timeout_ms -> ?priority:priority -> client -> batch_operation list -> unit result
+    ?timeout:timeout_ms
+    -> ?priority:priority
+    -> ?trace_batch:bool
+    -> client -> batch_operation list -> string option result
 
   (* (* we might need it again in the future *)
     val p2p_push : session -> connection ->

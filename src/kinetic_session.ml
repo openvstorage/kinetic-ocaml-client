@@ -25,4 +25,8 @@ module Session = struct
 
     let batch_on t = t.in_batch <- true
     let batch_off t = t.in_batch <- false
+
+    let tracing_info t =
+      Printf.sprintf "{ identity=%Li; connection_id=%Li; sequence=%Li batch_id=%li }"
+      t.identity t.connection_id t.sequence t.batch_id
 end
