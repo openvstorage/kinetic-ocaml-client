@@ -1,5 +1,6 @@
 true: debug, annot
 true: package(lwt)
+true: package(lwt_log)
 true: package(cryptokit)
 true: package(lwt.unix)
 "src":include
